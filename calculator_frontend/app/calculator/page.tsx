@@ -359,7 +359,8 @@ export default function CalculatorPage() {
           MaxCodeLength: searchDepth,
           cpuId: i,
           ncpus: effectiveThreads,
-          earlyExitCRThreshold
+          earlyExitCRThreshold,
+          domain
         };
         worker.postMessage(workerParams);
     });

@@ -30,6 +30,58 @@
 #include "vsearch_RPN_core.h"
 #include "math2.h"
 
+#ifdef USE_COMPLEX
+  #define CALC_LOG clog
+  #define CALC_EXP cexp
+  #define CALC_INV cinv
+  #define CALC_GAMMA ctgamma
+  #define CALC_SQRT csqrt
+  #define CALC_SQR csqr
+  #define CALC_SIN csin
+  #define CALC_ASIN casin
+  #define CALC_COS ccos
+  #define CALC_ACOS cacos
+  #define CALC_TAN ctan
+  #define CALC_ATAN catan
+  #define CALC_SINH csinh
+  #define CALC_ASINH casinh
+  #define CALC_COSH ccosh
+  #define CALC_ACOSH cacosh
+  #define CALC_TANH ctanh
+  #define CALC_ATANH catanh
+  
+  #define CALC_PLUS cplus
+  #define CALC_TIMES ctimes
+  #define CALC_SUBTRACT csubtract
+  #define CALC_DIVIDE cdivide
+  #define CALC_POW cpow
+#else
+  #define CALC_LOG log
+  #define CALC_EXP exp
+  #define CALC_INV inv
+  #define CALC_GAMMA tgamma
+  #define CALC_SQRT sqrt
+  #define CALC_SQR sqr
+  #define CALC_SIN sin
+  #define CALC_ASIN asin
+  #define CALC_COS cos
+  #define CALC_ACOS acos
+  #define CALC_TAN tan
+  #define CALC_ATAN atan
+  #define CALC_SINH sinh
+  #define CALC_ASINH asinh
+  #define CALC_COSH cosh
+  #define CALC_ACOSH acosh
+  #define CALC_TANH tanh
+  #define CALC_ATANH atanh
+  
+  #define CALC_PLUS plus
+  #define CALC_TIMES times
+  #define CALC_SUBTRACT subtract
+  #define CALC_DIVIDE divide
+  #define CALC_POW pow
+#endif
+
 /* ============================================================================
  * CONSTANTS (13)
  * 
@@ -42,6 +94,9 @@ static const ConstOp CALC4_CONSTS[] = {
     { M_E,                                   "EULER"       },
     { -1.0,                                  "NEG"         },
     { 1.61803398874989484820458683436563812, "GOLDENRATIO" },
+#ifdef USE_COMPLEX
+    { I,                                     "I"           },
+#endif
     { 1.0,                                   "ONE"         },
     { 2.0,                                   "TWO"         },
     { 3.0,                                   "THREE"       },
@@ -63,24 +118,24 @@ static const ConstOp CALC4_CONSTS[] = {
  * ============================================================================ */
 
 static const UnaryOp CALC4_FUNCS[] = {
-    { log,    "LOG"      },
-    { exp,    "EXP"      },
-    { inv,    "INV"      },   /* from math2.h: 1/x */
-    { tgamma, "GAMMA"    },
-    { sqrt,   "SQRT"     },
-    { sqr,    "SQR"      },   /* from math2.h: x*x */
-    { sin,    "SIN"      },
-    { asin,   "ARCSIN"   },
-    { cos,    "COS"      },
-    { acos,   "ARCCOS"   },
-    { tan,    "TAN"      },
-    { atan,   "ARCTAN"   },
-    { sinh,   "SINH"     },
-    { asinh,  "ARCSINH"  },
-    { cosh,   "COSH"     },
-    { acosh,  "ARCCOSH"  },
-    { tanh,   "TANH"     },
-    { atanh,  "ARCTANH"  }
+    { CALC_LOG,    "LOG"      },
+    { CALC_EXP,    "EXP"      },
+    { CALC_INV,    "INV"      },
+    { CALC_GAMMA,  "GAMMA"    },
+    { CALC_SQRT,   "SQRT"     },
+    { CALC_SQR,    "SQR"      },
+    { CALC_SIN,    "SIN"      },
+    { CALC_ASIN,   "ARCSIN"   },
+    { CALC_COS,    "COS"      },
+    { CALC_ACOS,   "ARCCOS"   },
+    { CALC_TAN,    "TAN"      },
+    { CALC_ATAN,   "ARCTAN"   },
+    { CALC_SINH,   "SINH"     },
+    { CALC_ASINH,  "ARCSINH"  },
+    { CALC_COSH,   "COSH"     },
+    { CALC_ACOSH,  "ARCCOSH"  },
+    { CALC_TANH,   "TANH"     },
+    { CALC_ATANH,  "ARCTANH"  }
 };
 
 #define CALC4_N_UNARY ((int)ARRAY_SIZE(CALC4_FUNCS))
@@ -94,11 +149,11 @@ static const UnaryOp CALC4_FUNCS[] = {
  * ============================================================================ */
 
 static const BinaryOp CALC4_OPS[] = {
-    { plus,     "PLUS"     },   /* from math2.h */
-    { times,    "TIMES"    },   /* from math2.h */
-    { subtract, "SUBTRACT" },   /* from math2.h */
-    { divide,   "DIVIDE"   },   /* from math2.h */
-    { pow,      "POWER"    }
+    { CALC_PLUS,     "PLUS"     },
+    { CALC_TIMES,    "TIMES"    },
+    { CALC_SUBTRACT, "SUBTRACT" },
+    { CALC_DIVIDE,   "DIVIDE"   },
+    { CALC_POW,      "POWER"    }
 };
 
 #define CALC4_N_BINARY ((int)ARRAY_SIZE(CALC4_OPS))

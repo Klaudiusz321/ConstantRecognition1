@@ -39,6 +39,15 @@
 
 #define MAX_OPS 64
 
+#ifdef USE_COMPLEX
+char* vsearch_RPN(
+    double z_real, double z_imag, double dz,
+    int MinK, int MaxK,
+    int cpu_id, int ncpus,
+    const char* const_list,
+    const char* fun_list,
+    const char* op_list)
+#else
 char* vsearch_RPN(
     double z, double dz,
     int MinK, int MaxK,
@@ -46,6 +55,7 @@ char* vsearch_RPN(
     const char* const_list,   /* comma-separated, e.g. "PI,EULER,ONE" or NULL for all */
     const char* fun_list,     /* comma-separated, e.g. "LOG,EXP,SQRT" or NULL for all */
     const char* op_list)      /* comma-separated, e.g. "PLUS,TIMES" or NULL for all */
+#endif
 {
     ConstOp const_ops[MAX_OPS];
     UnaryOp unary_ops[MAX_OPS];
@@ -121,11 +131,19 @@ char* vsearch_RPN(
         free(copy);
     }
     
+#ifdef USE_COMPLEX
+    return search_constant(z_real + z_imag * I, dz, MinK, MaxK, cpu_id, ncpus,
+                          const_ops, n_const,
+                          unary_ops, n_unary,
+                          binary_ops, n_binary,
+                          ERROR_REL, COMPARE_STRICT);
+#else
     return search_constant(z, dz, MinK, MaxK, cpu_id, ncpus,
                           const_ops, n_const,
                           unary_ops, n_unary,
                           binary_ops, n_binary,
                           ERROR_REL, COMPARE_STRICT);
+#endif
 }
 
 /* ============================================================================
@@ -134,6 +152,45 @@ char* vsearch_RPN(
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+
+#ifdef USE_COMPLEX
+/* Legacy API: uses full CALC4 calculator */
+EMSCRIPTEN_KEEPALIVE
+char* search_RPN(double z_real, double z_imag, double dz, int MinK, int MaxK, int cpu_id, int ncpus) {
+    return search_constant(z_real + z_imag * I, dz, MinK, MaxK, cpu_id, ncpus,
+                          CALC4_CONSTS, CALC4_N_CONST,
+                          CALC4_FUNCS,  CALC4_N_UNARY,
+                          CALC4_OPS,    CALC4_N_BINARY,
+                          ERROR_REL, COMPARE_STRICT);
+}
+
+EMSCRIPTEN_KEEPALIVE
+char* search_RPN_with_cr(double z_real, double z_imag, double dz, int MinK, int MaxK, int cpu_id, int ncpus, double cr_threshold) {
+    return search_constant_with_cr(z_real + z_imag * I, dz, MinK, MaxK, cpu_id, ncpus,
+                          CALC4_CONSTS, CALC4_N_CONST,
+                          CALC4_FUNCS,  CALC4_N_UNARY,
+                          CALC4_OPS,    CALC4_N_BINARY,
+                          ERROR_REL, COMPARE_STRICT, cr_threshold);
+}
+
+/* Hybrid search (same as search_RPN for now - placeholder for FP32+FP64) */
+EMSCRIPTEN_KEEPALIVE
+char* search_RPN_hybrid(double z_real, double z_imag, double dz, int MinK, int MaxK, int cpu_id, int ncpus) {
+    return search_constant(z_real + z_imag * I, dz, MinK, MaxK, cpu_id, ncpus,
+                          CALC4_CONSTS, CALC4_N_CONST,
+                          CALC4_FUNCS,  CALC4_N_UNARY,
+                          CALC4_OPS,    CALC4_N_BINARY,
+                          ERROR_REL, COMPARE_STRICT);
+}
+
+/* Configurable search via strings */
+EMSCRIPTEN_KEEPALIVE
+char* search_RPN_custom(double z_real, double z_imag, double dz, int MinK, int MaxK, int cpu_id, int ncpus,
+                        const char* consts, const char* funcs, const char* ops) {
+    return vsearch_RPN(z_real, z_imag, dz, MinK, MaxK, cpu_id, ncpus, consts, funcs, ops);
+}
+
+#else
 
 /* Legacy API: uses full CALC4 calculator */
 EMSCRIPTEN_KEEPALIVE
@@ -171,6 +228,29 @@ char* search_RPN_custom(double z, double dz, int MinK, int MaxK, int cpu_id, int
     return vsearch_RPN(z, dz, MinK, MaxK, cpu_id, ncpus, consts, funcs, ops);
 }
 
+#endif
+
+#ifdef USE_COMPLEX
+/* Function recognition via WASM */
+EMSCRIPTEN_KEEPALIVE
+char* search_function_wasm(
+    const double* x_real, const double* x_imag, 
+    const double* y_real, const double* y_imag, 
+    const double* dy_values,
+    int n_data,
+    int MinK, int MaxK,
+    int cpu_id, int ncpus)
+{
+    /* Convert arrays to DataPoint array */
+    DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
+    if (!data) return strdup("{\"error\":\"Memory allocation failed\"}");
+    
+    for (int i = 0; i < n_data; i++) {
+        data[i].x = x_real[i] + x_imag[i] * I;
+        data[i].y = y_real[i] + y_imag[i] * I;
+        data[i].dy = (dy_values != NULL) ? dy_values[i] : 0.0;
+    }
+#else
 /* Function recognition via WASM */
 EMSCRIPTEN_KEEPALIVE
 char* search_function_wasm(
@@ -181,15 +261,14 @@ char* search_function_wasm(
 {
     /* Convert arrays to DataPoint array */
     DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
-    if (!data) {
-        return strdup("{\"error\":\"Memory allocation failed\"}");
-    }
+    if (!data) return strdup("{\"error\":\"Memory allocation failed\"}");
     
     for (int i = 0; i < n_data; i++) {
         data[i].x = x_values[i];
         data[i].y = y_values[i];
         data[i].dy = (dy_values != NULL) ? dy_values[i] : 0.0;
     }
+#endif
     
     char* result = search_function(
         data, n_data,
@@ -204,6 +283,26 @@ char* search_function_wasm(
     return result;
 }
 
+#ifdef USE_COMPLEX
+/* Batch (Multiple Constants) recognition via WASM */
+EMSCRIPTEN_KEEPALIVE
+char* search_batch_wasm(
+    const double* x_real, const double* x_imag, 
+    const double* y_real, const double* y_imag, 
+    const double* dy_values,
+    int n_data,
+    int MinK, int MaxK,
+    int cpu_id, int ncpus)
+{
+    DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
+    if (!data) return strdup("{\"error\":\"Memory allocation failed\"}");
+    
+    for (int i = 0; i < n_data; i++) {
+        data[i].x = x_real[i] + x_imag[i] * I;
+        data[i].y = y_real[i] + y_imag[i] * I;
+        data[i].dy = (dy_values != NULL) ? dy_values[i] : 0.0;
+    }
+#else
 /* Batch (Multiple Constants) recognition via WASM */
 EMSCRIPTEN_KEEPALIVE
 char* search_batch_wasm(
@@ -212,17 +311,15 @@ char* search_batch_wasm(
     int MinK, int MaxK,
     int cpu_id, int ncpus)
 {
-    /* Convert arrays to DataPoint array */
     DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
-    if (!data) {
-        return strdup("{\"error\":\"Memory allocation failed\"}");
-    }
+    if (!data) return strdup("{\"error\":\"Memory allocation failed\"}");
     
     for (int i = 0; i < n_data; i++) {
         data[i].x = x_values[i];
         data[i].y = y_values[i];
         data[i].dy = (dy_values != NULL) ? dy_values[i] : 0.0;
     }
+#endif
     
     char* result = search_batch(
         data, n_data,

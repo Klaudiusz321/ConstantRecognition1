@@ -1,28 +1,32 @@
 // Worker script: worker.js
-//importScripts('rpn_function.js');
-importScripts('vsearch.js');
 
 let isReady = false;
+let moduleLoaded = false;
+let initializationPromise = null;
 
-// tell the main thread only when the runtime is ready
-Module.onRuntimeInitialized = () => {
-    isReady = true;
-    postMessage({type: 'ready'});
-};
-
-function waitForReady() {
-    return new Promise(resolve => {
-        if (isReady) {
-            resolve();
-        } else {
-            const check = setInterval(() => {
-                if (isReady) {
-                    clearInterval(check);
-                    resolve();
-                }
-            }, 10);
+function loadWasmModule(domain) {
+    if (initializationPromise) return initializationPromise;
+    
+    initializationPromise = new Promise((resolve, reject) => {
+        try {
+            if (domain === 'complex') {
+                importScripts('vsearch_complex.js');
+            } else {
+                importScripts('vsearch.js');
+            }
+            
+            Module.onRuntimeInitialized = () => {
+                isReady = true;
+                postMessage({type: 'ready'});
+                resolve();
+            };
+        } catch (e) {
+            console.error("Failed to load WASM module", e);
+            reject(e);
         }
     });
+    
+    return initializationPromise;
 }
 
 function allocateDoubleArray(arr) {
@@ -31,70 +35,231 @@ function allocateDoubleArray(arr) {
     return ptr;
 }
 
-function doWork(initDelay, z, inputValue, recognitionTarget, calculatorMode, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, earlyExitCRThreshold) {
+function doWork(initDelay, z, inputValue, recognitionTarget, calculatorMode, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, earlyExitCRThreshold, domain) {
     return new Promise(resolve => {
         setTimeout(() => {
             try {
                 if (recognitionTarget === 'function') {
                     const pairs = inputValue.split(/[\n;]/).map(p => p.trim()).filter(p => p);
-                    const x_arr = [];
-                    const y_arr = [];
+                    const x_real = []; const x_imag = [];
+                    const y_real = []; const y_imag = [];
+                    
                     pairs.forEach(p => {
                         const parts = p.split(/[:,]/);
                         if (parts.length >= 2) {
-                            x_arr.push(parseFloat(parts[0]));
-                            y_arr.push(parseFloat(parts[1]));
+                            if (domain === 'complex') {
+                                const parseComplex = (str) => {
+                                    str = str.replace(/\s/g, '').toLowerCase();
+                                    let r = 0, i = 0;
+                                    if (str.endsWith('i')) {
+                                        let core = str.slice(0, -1);
+                                        if (core === '' || core === '+') { r = 0; i = 1; }
+                                        else if (core === '-') { r = 0; i = -1; }
+                                        else {
+                                            let splitIdx = -1;
+                                            for (let j = core.length - 1; j > 0; j--) {
+                                                if ((core[j] === '+' || core[j] === '-') && core[j-1] !== 'e') {
+                                                    splitIdx = j;
+                                                    break;
+                                                }
+                                            }
+                                            if (splitIdx !== -1) {
+                                                let rStr = core.slice(0, splitIdx);
+                                                let iStr = core.slice(splitIdx);
+                                                r = parseFloat(rStr);
+                                                if (iStr === '+' || iStr === '-') iStr += '1';
+                                                i = parseFloat(iStr);
+                                            } else {
+                                                r = 0;
+                                                i = parseFloat(core);
+                                            }
+                                        }
+                                    } else {
+                                        r = parseFloat(str);
+                                        i = 0;
+                                    }
+                                    return { r: isNaN(r) ? 0 : r, i: isNaN(i) ? 0 : i };
+                                };
+                                const px = parseComplex(parts[0]);
+                                const py = parseComplex(parts[1]);
+                                x_real.push(px.r); x_imag.push(px.i);
+                                y_real.push(py.r); y_imag.push(py.i);
+                            } else {
+                                x_real.push(parseFloat(parts[0]));
+                                y_real.push(parseFloat(parts[1]));
+                            }
                         }
                     });
                     
-                    if (x_arr.length > 0) {
-                        const x_ptr = allocateDoubleArray(x_arr);
-                        const y_ptr = allocateDoubleArray(y_arr);
-                        const result = Module.ccall('search_function_wasm', 'string',
-                            ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number'],
-                            [x_ptr, y_ptr, 0, x_arr.length, MinCodeLength, MaxCodeLength, cpuId, ncpus]);
-                        Module._free(x_ptr);
-                        Module._free(y_ptr);
-                        resolve(JSON.parse(result));
-                        return;
+                    if (x_real.length > 0) {
+                        if (domain === 'complex') {
+                            const xr_ptr = allocateDoubleArray(x_real); const xi_ptr = allocateDoubleArray(x_imag);
+                            const yr_ptr = allocateDoubleArray(y_real); const yi_ptr = allocateDoubleArray(y_imag);
+                            const result = Module.ccall('search_function_wasm', 'string',
+                                ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number'],
+                                [xr_ptr, xi_ptr, yr_ptr, yi_ptr, 0, x_real.length, MinCodeLength, MaxCodeLength, cpuId, ncpus]);
+                            Module._free(xr_ptr); Module._free(xi_ptr); Module._free(yr_ptr); Module._free(yi_ptr);
+                            resolve(JSON.parse(result));
+                            return;
+                        } else {
+                            const x_ptr = allocateDoubleArray(x_real);
+                            const y_ptr = allocateDoubleArray(y_real);
+                            const result = Module.ccall('search_function_wasm', 'string',
+                                ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number'],
+                                [x_ptr, y_ptr, 0, x_real.length, MinCodeLength, MaxCodeLength, cpuId, ncpus]);
+                            Module._free(x_ptr);
+                            Module._free(y_ptr);
+                            resolve(JSON.parse(result));
+                            return;
+                        }
                     }
                 } else if (recognitionTarget === 'multiple') {
-                    const vals = inputValue.split(/[,;\n]/).map(v => parseFloat(v.trim())).filter(v => !isNaN(v));
-                    if (vals.length > 0) {
-                        const x_arr = new Array(vals.length).fill(0);
-                        const x_ptr = allocateDoubleArray(x_arr);
-                        const y_ptr = allocateDoubleArray(vals);
-                        const result = Module.ccall('search_batch_wasm', 'string',
-                            ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number'],
-                            [x_ptr, y_ptr, 0, vals.length, MinCodeLength, MaxCodeLength, cpuId, ncpus]);
-                        Module._free(x_ptr);
-                        Module._free(y_ptr);
-                        resolve(JSON.parse(result));
-                        return;
+                    let values = [];
+                    if (domain === 'complex') {
+                        const parseComplex = (str) => {
+                            str = str.replace(/\s/g, '').toLowerCase();
+                            let r = 0, i = 0;
+                            if (str.endsWith('i')) {
+                                let core = str.slice(0, -1);
+                                if (core === '' || core === '+') { r = 0; i = 1; }
+                                else if (core === '-') { r = 0; i = -1; }
+                                else {
+                                    let splitIdx = -1;
+                                    for (let j = core.length - 1; j > 0; j--) {
+                                        if ((core[j] === '+' || core[j] === '-') && core[j-1] !== 'e') {
+                                            splitIdx = j;
+                                            break;
+                                        }
+                                    }
+                                    if (splitIdx !== -1) {
+                                        let rStr = core.slice(0, splitIdx);
+                                        let iStr = core.slice(splitIdx);
+                                        r = parseFloat(rStr);
+                                        if (iStr === '+' || iStr === '-') iStr += '1';
+                                        i = parseFloat(iStr);
+                                    } else {
+                                        r = 0;
+                                        i = parseFloat(core);
+                                    }
+                                }
+                            } else {
+                                r = parseFloat(str);
+                                i = 0;
+                            }
+                            return { r: isNaN(r) ? 0 : r, i: isNaN(i) ? 0 : i };
+                        };
+                        values = inputValue.split(/[,;\n]/).map(v => parseComplex(v.trim()));
+                    } else {
+                        values = inputValue.split(/[,;\n]/).map(v => parseFloat(v.trim())).filter(v => !isNaN(v));
+                    }
+                    
+                    if (values.length > 0) {
+                        if (domain === 'complex') {
+                            const xr_arr = new Array(values.length).fill(0);
+                            const xi_arr = new Array(values.length).fill(0);
+                            const yr_arr = values.map(v => v.r);
+                            const yi_arr = values.map(v => v.i);
+                            const xr_ptr = allocateDoubleArray(xr_arr); const xi_ptr = allocateDoubleArray(xi_arr);
+                            const yr_ptr = allocateDoubleArray(yr_arr); const yi_ptr = allocateDoubleArray(yi_arr);
+                            const result = Module.ccall('search_batch_wasm', 'string',
+                                ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number'],
+                                [xr_ptr, xi_ptr, yr_ptr, yi_ptr, 0, values.length, MinCodeLength, MaxCodeLength, cpuId, ncpus]);
+                            Module._free(xr_ptr); Module._free(xi_ptr); Module._free(yr_ptr); Module._free(yi_ptr);
+                            resolve(JSON.parse(result));
+                            return;
+                        } else {
+                            const x_arr = new Array(values.length).fill(0);
+                            const x_ptr = allocateDoubleArray(x_arr);
+                            const y_ptr = allocateDoubleArray(values);
+                            const result = Module.ccall('search_batch_wasm', 'string',
+                                ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number'],
+                                [x_ptr, y_ptr, 0, values.length, MinCodeLength, MaxCodeLength, cpuId, ncpus]);
+                            Module._free(x_ptr);
+                            Module._free(y_ptr);
+                            resolve(JSON.parse(result));
+                            return;
+                        }
                     }
                 }
                 
+                let z_real = 0, z_imag = 0;
+                if (domain === 'complex') {
+                    let str = inputValue.replace(/\s/g, '').toLowerCase();
+                    if (str.endsWith('i')) {
+                        let core = str.slice(0, -1);
+                        if (core === '' || core === '+') { z_real = 0; z_imag = 1; }
+                        else if (core === '-') { z_real = 0; z_imag = -1; }
+                        else {
+                            let splitIdx = -1;
+                            for (let j = core.length - 1; j > 0; j--) {
+                                if ((core[j] === '+' || core[j] === '-') && core[j-1] !== 'e') {
+                                    splitIdx = j;
+                                    break;
+                                }
+                            }
+                            if (splitIdx !== -1) {
+                                let rStr = core.slice(0, splitIdx);
+                                let iStr = core.slice(splitIdx);
+                                z_real = parseFloat(rStr);
+                                if (iStr === '+' || iStr === '-') iStr += '1';
+                                z_imag = parseFloat(iStr);
+                            } else {
+                                z_real = 0;
+                                z_imag = parseFloat(core);
+                            }
+                        }
+                    } else {
+                        z_real = parseFloat(str);
+                        z_imag = 0;
+                    }
+                    if (isNaN(z_real)) z_real = 0;
+                    if (isNaN(z_imag)) z_imag = 0;
+                } else {
+                    z_real = z;
+                }
+
                 if (calculatorMode === 'list' || calculatorMode === 'custom') {
-                    // Can be extended to pass custom operator lists
-                    const result = Module.ccall('search_RPN_custom', 'string',
-                        ['number', 'number', 'number', 'number', 'number', 'number', 'string', 'string', 'string'],
-                        [z, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, "", "", ""]);
-                    resolve(JSON.parse(result));
+                    if (domain === 'complex') {
+                        const result = Module.ccall('search_RPN_custom', 'string',
+                            ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'string', 'string', 'string'],
+                            [z_real, z_imag, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, "", "", ""]);
+                        resolve(JSON.parse(result));
+                    } else {
+                        const result = Module.ccall('search_RPN_custom', 'string',
+                            ['number', 'number', 'number', 'number', 'number', 'number', 'string', 'string', 'string'],
+                            [z_real, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, "", "", ""]);
+                        resolve(JSON.parse(result));
+                    }
                     return;
                 }
 
-                if (typeof Module._search_RPN_with_cr === 'function') {
-                    const result = Module.ccall('search_RPN_with_cr', 'string',
+                if (domain === 'complex') {
+                    if (typeof Module._search_RPN_with_cr === 'function') {
+                        const result = Module.ccall('search_RPN_with_cr', 'string',
+                                       ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number'],
+                                       [z_real, z_imag, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, earlyExitCRThreshold]);
+                        resolve(JSON.parse(result));
+                        return;
+                    }
+
+                    const result = Module.ccall('search_RPN', 'string',
                                    ['number', 'number', 'number', 'number', 'number', 'number', 'number'],
-                                   [z, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, earlyExitCRThreshold]);
+                                   [z_real, z_imag, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus]);
                     resolve(JSON.parse(result));
-                    return;
-                }
+                } else {
+                    if (typeof Module._search_RPN_with_cr === 'function') {
+                        const result = Module.ccall('search_RPN_with_cr', 'string',
+                                       ['number', 'number', 'number', 'number', 'number', 'number', 'number'],
+                                       [z_real, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, earlyExitCRThreshold]);
+                        resolve(JSON.parse(result));
+                        return;
+                    }
 
-                const result = Module.ccall('search_RPN', 'string',
-                               ['number', 'number', 'number', 'number', 'number', 'number'],
-                               [z, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus]);
-                resolve(JSON.parse(result));
+                    const result = Module.ccall('search_RPN', 'string',
+                                   ['number', 'number', 'number', 'number', 'number', 'number'],
+                                   [z_real, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus]);
+                    resolve(JSON.parse(result));
+                }
             } catch (err) {
                 console.error('WASM call error:', err);
                 resolve({ results: [], error: err.message });
@@ -115,15 +280,15 @@ onmessage = async function(e) {
         MaxCodeLength,
         cpuId,
         ncpus,
-        earlyExitCRThreshold = 0.9
+        earlyExitCRThreshold = 0.9,
+        domain = 'real'
     } = e.data;
     
-    // Wait for WASM to be ready
-    await waitForReady();
+    await loadWasmModule(domain);
     
-    console.log(`Worker ${cpuId} of ${ncpus} starting work for z=${z}, Target=${recognitionTarget}, Mode=${calculatorMode}`);
+    console.log(`Worker ${cpuId} of ${ncpus} starting work for z=${z}, Target=${recognitionTarget}, Mode=${calculatorMode}, Domain=${domain}`);
     
-    const resultJSON = await doWork(initDelay, z, inputValue, recognitionTarget, calculatorMode, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, earlyExitCRThreshold);
+    const resultJSON = await doWork(initDelay, z, inputValue, recognitionTarget, calculatorMode, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, earlyExitCRThreshold, domain);
     
     console.log(`Worker ${cpuId} finished work with result:`, resultJSON);
     

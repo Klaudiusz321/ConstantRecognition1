@@ -110,6 +110,22 @@ static inline long double emll(long double x, long double y) { return expl(x) - 
 
 #ifndef _MSC_VER
 
+static inline complex float       cplusf(complex float a, complex float b)       { return a + b; }
+static inline complex double      cplus(complex double a, complex double b)       { return a + b; }
+static inline complex long double cplusl(complex long double a, complex long double b) { return a + b; }
+
+static inline complex float       ctimesf(complex float a, complex float b)      { return a * b; }
+static inline complex double      ctimes(complex double a, complex double b)      { return a * b; }
+static inline complex long double ctimesl(complex long double a, complex long double b) { return a * b; }
+
+static inline complex float       csubtractf(complex float a, complex float b)   { return a - b; }
+static inline complex double      csubtract(complex double a, complex double b)   { return a - b; }
+static inline complex long double csubtractl(complex long double a, complex long double b) { return a - b; }
+
+static inline complex float       cdividef(complex float a, complex float b)     { return a / b; }
+static inline complex double      cdivide(complex double a, complex double b)     { return a / b; }
+static inline complex long double cdividel(complex long double a, complex long double b) { return a / b; }
+
 static inline complex float       csqrf(complex float x)       { return x * x; }
 static inline complex double      csqr(complex double x)       { return x * x; }
 static inline complex long double csqrl(complex long double x) { return x * x; }

@@ -27,21 +27,32 @@
 #endif
 
 /* ============================================================================
+ * TYPE DEFINITIONS
+ * ============================================================================ */
+
+#ifdef USE_COMPLEX
+#include <complex.h>
+typedef double complex calc_type;
+#else
+typedef double calc_type;
+#endif
+
+/* ============================================================================
  * CALCULATOR OPERATION TYPES
  * ============================================================================ */
 
 typedef struct {
-    double value;
+    calc_type value;
     const char* name;
 } ConstOp;
 
 typedef struct {
-    double (*func)(double);
+    calc_type (*func)(calc_type);
     const char* name;
 } UnaryOp;
 
 typedef struct {
-    double (*func)(double, double);
+    calc_type (*func)(calc_type, calc_type);
     const char* name;
 } BinaryOp;
 
@@ -60,9 +71,9 @@ typedef struct {
  * ============================================================================ */
 
 typedef struct {
-    double x;    /* Independent variable (ignored for constants) */
-    double y;    /* Target value */
-    double dy;   /* Uncertainty/error bar (0 = unspecified) */
+    calc_type x;    /* Independent variable (ignored for constants) */
+    calc_type y;    /* Target value */
+    double dy;      /* Uncertainty/error bar (0 = unspecified), always real distance */
 } DataPoint;
 
 /* ============================================================================
@@ -162,9 +173,13 @@ char* vsearch_core(
  * CONVENIENCE WRAPPERS
  * ============================================================================ */
 
+/* ============================================================================
+ * CONVENIENCE WRAPPERS
+ * ============================================================================ */
+
 /* Constant recognition - simpler interface */
 char* search_constant(
-    double target, double delta,
+    calc_type target, double delta,
     int MinK, int MaxK,
     int cpu_id, int ncpus,
     const ConstOp* const_ops, int n_const,
@@ -174,7 +189,7 @@ char* search_constant(
     CompareMode compare);
 
 char* search_constant_with_cr(
-    double target, double delta,
+    calc_type target, double delta,
     int MinK, int MaxK,
     int cpu_id, int ncpus,
     const ConstOp* const_ops, int n_const,

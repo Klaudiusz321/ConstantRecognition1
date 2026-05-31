@@ -69,4 +69,55 @@ describe('Frontend Input Parsing Logic', () => {
     });
   });
 
+const parseComplex = (str) => {
+    str = str.replace(/\s/g, '').toLowerCase();
+    let r = 0, i = 0;
+    if (str.endsWith('i')) {
+        let core = str.slice(0, -1);
+        if (core === '' || core === '+') { r = 0; i = 1; }
+        else if (core === '-') { r = 0; i = -1; }
+        else {
+            let splitIdx = -1;
+            for (let j = core.length - 1; j > 0; j--) {
+                if ((core[j] === '+' || core[j] === '-') && core[j-1] !== 'e') {
+                    splitIdx = j;
+                    break;
+                }
+            }
+            if (splitIdx !== -1) {
+                let rStr = core.slice(0, splitIdx);
+                let iStr = core.slice(splitIdx);
+                r = parseFloat(rStr);
+                if (iStr === '+' || iStr === '-') iStr += '1';
+                i = parseFloat(iStr);
+            } else {
+                r = 0;
+                i = parseFloat(core);
+            }
+        }
+    } else {
+        r = parseFloat(str);
+        i = 0;
+    }
+    return { r: isNaN(r) ? 0 : r, i: isNaN(i) ? 0 : i };
+};
+
+describe('Complex Parsing Logic', () => {
+  it('should parse real numbers', () => {
+    expect(parseComplex("3.14")).toEqual({ r: 3.14, i: 0 });
+    expect(parseComplex("-2.5")).toEqual({ r: -2.5, i: 0 });
+  });
+  
+  it('should parse pure imaginary numbers', () => {
+    expect(parseComplex("3i")).toEqual({ r: 0, i: 3 });
+    expect(parseComplex("-2.5i")).toEqual({ r: 0, i: -2.5 });
+  });
+
+  it('should parse complex numbers', () => {
+    expect(parseComplex("3.14+2i")).toEqual({ r: 3.14, i: 2 });
+    expect(parseComplex("-2.5-1.5i")).toEqual({ r: -2.5, i: -1.5 });
+    expect(parseComplex("1+i")).toEqual({ r: 1, i: 1 });
+    expect(parseComplex("1-i")).toEqual({ r: 1, i: -1 });
+  });
+});
 });

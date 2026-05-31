@@ -133,48 +133,63 @@ static int ternary_increment(char* ternary, int K) {
  * MODE_FUNCTION: indices[i] ∈ [0, n_const] → 0=x, 1..n_const=constants
  * ============================================================================ */
 
-static double evaluate_expression(
+static calc_type evaluate_expression(
     const char* ternary, const int* indices, int K,
     const ConstOp* const_ops, int n_const,
     const UnaryOp* unary_ops,
     const BinaryOp* binary_ops,
     SearchMode mode,
-    double x_value)   /* Only used in MODE_FUNCTION */
+    calc_type x_value)   /* Only used in MODE_FUNCTION */
 {
-    double stack[MAX_STACK_DEPTH];
+    calc_type stack[MAX_STACK_DEPTH];
     int sp = 0;
     
     for (int i = 0; i < K; i++) {
         switch (ternary[i]) {
             case 0:  /* Constant (or variable in function mode) */
+#ifdef USE_COMPLEX
+                if (sp >= MAX_STACK_DEPTH) return NAN + NAN * I;
+#else
                 if (sp >= MAX_STACK_DEPTH) return nan("");
-                if (mode == MODE_FUNCTION && indices[i] == 0) {
-                    stack[sp++] = x_value;  /* Index 0 = variable x */
+#endif
+                if (mode == MODE_FUNCTION) {
+                    if (indices[i] == 0) {
+                        stack[sp++] = x_value;
+                    } else {
+                        stack[sp++] = const_ops[indices[i] - 1].value;
+                    }
                 } else {
-                    /* In function mode, constant indices are shifted by 1 */
-                    int idx = (mode == MODE_FUNCTION) ? indices[i] - 1 : indices[i];
-                    stack[sp++] = const_ops[idx].value;
+                    stack[sp++] = const_ops[indices[i]].value;
                 }
                 break;
                 
             case 1:  /* Unary function */
+#ifdef USE_COMPLEX
+                if (sp < 1) return NAN + NAN * I;
+#else
                 if (sp < 1) return nan("");
+#endif
                 stack[sp-1] = unary_ops[indices[i]].func(stack[sp-1]);
                 break;
                 
             case 2:  /* Binary operator */
+#ifdef USE_COMPLEX
+                if (sp < 2) return NAN + NAN * I;
+#else
                 if (sp < 2) return nan("");
+#endif
                 sp--;
-                {
-                    double b = stack[sp];
-                    double a = stack[sp-1];
-                    stack[sp-1] = binary_ops[indices[i]].func(b, a);
-                }
+                calc_type b = stack[sp];
+                calc_type a = stack[sp-1];
+                stack[sp-1] = binary_ops[indices[i]].func(b, a);
                 break;
         }
     }
-    
+#ifdef USE_COMPLEX
+    return (sp == 1) ? stack[0] : (NAN + NAN * I);
+#else
     return (sp == 1) ? stack[0] : nan("");
+#endif
 }
 
 /* ============================================================================
@@ -230,7 +245,17 @@ static void format_code(
  * ERROR COMPUTATION
  * ============================================================================ */
 
-static double compute_single_error(double computed, double target, ErrorMetric metric) {
+static double compute_single_error(calc_type computed, calc_type target, ErrorMetric metric) {
+#ifdef USE_COMPLEX
+    if (isnan(creal(computed)) || isnan(cimag(computed)) || isinf(creal(computed)) || isinf(cimag(computed))) return DBL_MAX;
+    switch (metric) {
+        case ERROR_ABS: return cabs(computed - target);
+        case ERROR_REL: return (cabs(target) == 0.0) ? cabs(computed) : cabs(computed/target - 1.0);
+        case ERROR_ULP: return cabs(computed - target);
+        case ERROR_HAMMING: return cabs(computed - target);
+        default: return cabs(computed - target);
+    }
+#else
     if (isnan(computed) || isinf(computed)) return DBL_MAX;
     switch (metric) {
         case ERROR_ABS: return fabs(computed - target);
@@ -239,13 +264,18 @@ static double compute_single_error(double computed, double target, ErrorMetric m
         case ERROR_HAMMING: return (double)compute_hamming_distance(target, computed);
         default: return fabs(computed - target);
     }
+#endif
 }
 
-static int is_exact_match(double err, double computed, double target, double delta, int K, int n_total, double cr_threshold) {
+static int is_exact_match(double err, calc_type computed, calc_type target, double delta, int K, int n_total, double cr_threshold) {
     if (err <= EPS_MAX * DBL_EPSILON) return 1;
     if (delta > 0) {
         double compression = (err > 0) ? -log10(err) / (K * log10(n_total)) : 10.0;
+#ifdef USE_COMPLEX
+        if (cabs(computed - target) <= 2.0 * delta && compression >= cr_threshold) return 1;
+#else
         if (fabs(computed - target) <= 2.0 * delta && compression >= cr_threshold) return 1;
+#endif
     }
     return 0;
 }
@@ -448,12 +478,16 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
                         "\"target_id\":%.0f, "
                         "\"target\":%.17g, "
                         "\"K\":%d, "
-                        "\"REL_ERR\":%.5e, "
+                        "\"err\":%.17g, "
                         "\"result\":\"SUCCESS\", "
-                        "\"HAMMING_DISTANCE\":%d, "
-                        "\"RPN\":\"%s\""
+                        "\"hamming\":%u, "
+                        "\"code\":\"%s\""
                         "}",
+#ifdef USE_COMPLEX
+                        creal(st->data[t].x), creal(target), K, err, hamming, code);
+#else
                         st->data[t].x, target, K, err, hamming, code);
+#endif
                     st->json_ptr += w;
                     st->json_remaining -= w;
                     st->result_count++;
@@ -545,24 +579,14 @@ char* vsearch_core(
         "\"n_data\": %d,\n"
         "\"target\": %.17g,\n"
         "\"delta\": %.17g,\n"
-        "\"num_to_find\": %d,\n"
-        "\"cpuId\": %d,\n"
-        "\"ncpus\": %d,\n"
-        "\"minK\": %d,\n"
-        "\"maxK\": %d,\n"
-        "\"n_const\": %d,\n"
-        "\"n_unary\": %d,\n"
-        "\"n_binary\": %d,\n"
-        "\"n_total\": %d,\n"
-        "\"compiler\": \"%s\",\n"
-        "\"arch\": \"%s\",\n"
-        "\"os\": \"%s\",\n"
-        "\"results\": [\n",
+        "\"candidates\": [\n",
+#ifdef USE_COMPLEX
         BUILD_TIMESTAMP, mode_str, metric_str[metric], compare_str,
-        n_data, data[0].y, data[0].dy, effective_num,
-        cpu_id, ncpus, MinK, MaxK,
-        n_const, n_unary, n_binary, n_total,
-        COMPILER_VERSION, ARCH_INFO, OS_INFO);
+        n_data, creal(data[0].y), data[0].dy);
+#else
+        BUILD_TIMESTAMP, mode_str, metric_str[metric], compare_str,
+        n_data, data[0].y, data[0].dy);
+#endif
     st.json_ptr += w;
     st.json_remaining -= w;
     
@@ -604,12 +628,12 @@ char* vsearch_core(
                     w = snprintf(st.json_ptr, st.json_remaining,
                         "{"
                         "\"K\":%d, "
-                        "\"REL_ERR\":%.5e, "
+                        "\"err\":%.17g, "
                         "\"result\":\"K_BEST\"      , "
                         "\"status\":\"RUNNING\", "
                         "\"cpuId\":%d, "
-                        "\"HAMMING_DISTANCE\":%d, "
-                        "\"RPN\":\"%s\""
+                        "\"hamming\":%u, "
+                        "\"code\":\"%s\""
                         "}",
                         K, targets[i].best_err, cpu_id, hamming, code);
                     st.json_ptr += w;
@@ -661,12 +685,16 @@ char* vsearch_core(
                         "\"target_id\":%.0f, "
                         "\"target\":%.17g, "
                         "\"K\":%d, "
-                        "\"REL_ERR\":%.5e, "
+                        "\"err\":%.17g, "
                         "\"result\":\"BEST\", "
-                        "\"HAMMING_DISTANCE\":%d, "
-                        "\"RPN\":\"%s\""
+                        "\"hamming\":%u, "
+                        "\"code\":\"%s\""
                         "}",
+#ifdef USE_COMPLEX
+                        creal(data[i].x), creal(data[i].y), targets[i].best_K, targets[i].best_err, hamming, code);
+#else
                         data[i].x, data[i].y, targets[i].best_K, targets[i].best_err, hamming, code);
+#endif
                     st.json_ptr += w;
                     st.json_remaining -= w;
                     st.result_count++;
@@ -682,7 +710,7 @@ char* vsearch_core(
         
         /* Compute compression ratio */
         double compression;
-        double target_val = data[0].y;
+        double target_val = creal(data[0].y);
         double delta_val = data[0].dy;
         if (target_val == 0.0) {
             compression = 0.0;
@@ -701,7 +729,7 @@ char* vsearch_core(
         w = snprintf(st.json_ptr, st.json_remaining,
             "],\n \"result\":\"%s\", \"RPN\":\"%s\", \"REL_ERR\":%.17e, "
             "\"INPUT_ABS_ERR\":%lf, \"COMPRESSION_RATIO\":%lf, \"K\":%d, "
-            "\"status\":\"FINISHED\", \"HAMMING_DISTANCE\":%d, "
+            "\"status\":\"FINISHED\", \"hamming\":%u, "
             "\"num_found\":%d, \"num_not_found\":%d, "
             "\"total_ternary\":%llu, \"valid_ternary\":%llu, \"evaluations\":%llu}",
             result_type, final_code, targets[0].best_err,
@@ -721,7 +749,7 @@ char* vsearch_core(
  * ============================================================================ */
 
 char* search_constant(
-    double target, double delta,
+    calc_type target, double delta,
     int MinK, int MaxK,
     int cpu_id, int ncpus,
     const ConstOp* const_ops, int n_const,
@@ -730,14 +758,17 @@ char* search_constant(
     ErrorMetric metric,
     CompareMode compare)
 {
-    DataPoint data[1] = {{.x = 0.0, .y = target, .dy = delta}};
+    DataPoint data[1];
+    data[0].x = 0.0;
+    data[0].y = target;
+    data[0].dy = delta;
     return vsearch_core(MODE_CONSTANT, data, 1, MinK, MaxK, cpu_id, ncpus,
                        const_ops, n_const, unary_ops, n_unary, binary_ops, n_binary,
                        metric, compare, 1, DEFAULT_CR_THRESHOLD);
 }
 
 char* search_constant_with_cr(
-    double target, double delta,
+    calc_type target, double delta,
     int MinK, int MaxK,
     int cpu_id, int ncpus,
     const ConstOp* const_ops, int n_const,
@@ -747,7 +778,10 @@ char* search_constant_with_cr(
     CompareMode compare,
     double cr_threshold)
 {
-    DataPoint data[1] = {{.x = 0.0, .y = target, .dy = delta}};
+    DataPoint data[1];
+    data[0].x = 0.0;
+    data[0].y = target;
+    data[0].dy = delta;
     return vsearch_core(MODE_CONSTANT, data, 1, MinK, MaxK, cpu_id, ncpus,
                        const_ops, n_const, unary_ops, n_unary, binary_ops, n_binary,
                        metric, compare, 1, cr_threshold);
