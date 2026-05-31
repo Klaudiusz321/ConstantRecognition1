@@ -1,0 +1,20 @@
+{
+"buildTime": "May 31 2026 22:13:09",
+"mode": "CONSTANT",
+"metric": "REL",
+"compare": "STRICT",
+"n_data": 1,
+"target": 1.1780972450961724,
+"delta": 4.9999999999999997e-21,
+"candidates": [
+{"K":1, "REL_ERR":1.7976931348623157e+308, "result":"K_BEST"      , "status":"RUNNING", "cpuId":1, "HAMMING_DISTANCE":38, "RPN":"PI"},
+{"K":2, "REL_ERR":2.83231e-02, "result":"INTERMEDIATE", "status":"RUNNING", "cpuId":1, "HAMMING_DISTANCE":23, "RPN":"PI, LOG"},
+{"K":2, "REL_ERR":2.45824e-03, "result":"INTERMEDIATE", "status":"RUNNING", "cpuId":1, "HAMMING_DISTANCE":24, "RPN":"ONE, SINH"},
+{"K":2, "REL_ERR":0.0024582448218309905, "result":"K_BEST"      , "status":"RUNNING", "cpuId":1, "HAMMING_DISTANCE":24, "RPN":"ONE, SINH"},
+{"K":3, "REL_ERR":1.01949e-03, "result":"INTERMEDIATE", "status":"RUNNING", "cpuId":1, "HAMMING_DISTANCE":24, "RPN":"GOLDENRATIO, SINH, ARCTAN"},
+{"K":3, "REL_ERR":5.83333e-04, "result":"INTERMEDIATE", "status":"RUNNING", "cpuId":1, "HAMMING_DISTANCE":29, "RPN":"FOUR, LOG, SQRT"},
+{"K":3, "REL_ERR":0.0005833326438529074, "result":"K_BEST"      , "status":"RUNNING", "cpuId":1, "HAMMING_DISTANCE":29, "RPN":"FOUR, LOG, SQRT"},
+{"K":4, "REL_ERR":2.12168e-05, "result":"INTERMEDIATE", "status":"RUNNING", "cpuId":1, "HAMMING_DISTANCE":25, "RPN":"FIVE, ARCTAN, GOLDENRATIO, DIVIDE"},
+{"K":4, "REL_ERR":5.93151e-06, "result":"INTERMEDIATE", "status":"RUNNING", "cpuId":1, "HAMMING_DISTANCE":14, "RPN":"GOLDENRATIO, TANH, ARCSINH, ARCTANH"},
+{"K":4, "REL_ERR":0.00000e+00, "result":"INTERMEDIATE", "status":"RUNNING", "cpuId":1, "HAMMING_DISTANCE":0, "RPN":"ONE, ARCSINH, EXP, ARCTAN"}],
+ "result":"SUCCESS", "RPN":"ONE, ARCSINH, EXP, ARCTAN", "REL_ERR":0.00000000000000000e+00, "INPUT_ABS_ERR":0.000000, "COMPRESSION_RATIO":0.160637, "K":4, "status":"FINISHED", "hamming":0, "num_found":1, "num_not_found":0, "total_ternary":11, "valid_ternary":4, "evaluations":47226}

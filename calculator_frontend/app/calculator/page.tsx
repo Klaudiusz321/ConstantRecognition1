@@ -143,9 +143,10 @@ export default function CalculatorPage() {
     // Collect all results in one batch to avoid multiple re-renders
     const newResults: SearchResult[] = [];
     
-    // Worker completed with results array
-    if (data.results && Array.isArray(data.results)) {
-      data.results.forEach((r: { K: number; RPN: string; result: string; REL_ERR: number; status?: string; cpuId?: number; COMPRESSION_RATIO?: number }) => {
+    // Worker completed with results array (new WASM uses 'candidates', old uses 'results')
+    const candidatesArray = data.candidates || data.results;
+    if (candidatesArray && Array.isArray(candidatesArray)) {
+      candidatesArray.forEach((r: { K: number; RPN: string; result: string; REL_ERR: number; status?: string; cpuId?: number; COMPRESSION_RATIO?: number }) => {
         // Calculate numeric value from RPN
         let numericValue: string;
         try {
