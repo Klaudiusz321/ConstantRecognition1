@@ -478,10 +478,10 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
                         "\"target_id\":%.0f, "
                         "\"target\":%.17g, "
                         "\"K\":%d, "
-                        "\"err\":%.17g, "
+                        "\"REL_ERR\":%.17g, "
                         "\"result\":\"SUCCESS\", "
-                        "\"hamming\":%u, "
-                        "\"code\":\"%s\""
+                        "\"HAMMING_DISTANCE\":%u, "
+                        "\"RPN\":\"%s\""
                         "}",
 #ifdef USE_COMPLEX
                         creal(st->data[t].x), creal(target), K, err, hamming, code);
@@ -628,12 +628,12 @@ char* vsearch_core(
                     w = snprintf(st.json_ptr, st.json_remaining,
                         "{"
                         "\"K\":%d, "
-                        "\"err\":%.17g, "
+                        "\"REL_ERR\":%.17g, "
                         "\"result\":\"K_BEST\"      , "
                         "\"status\":\"RUNNING\", "
                         "\"cpuId\":%d, "
-                        "\"hamming\":%u, "
-                        "\"code\":\"%s\""
+                        "\"HAMMING_DISTANCE\":%u, "
+                        "\"RPN\":\"%s\""
                         "}",
                         K, targets[i].best_err, cpu_id, hamming, code);
                     st.json_ptr += w;
@@ -685,10 +685,10 @@ char* vsearch_core(
                         "\"target_id\":%.0f, "
                         "\"target\":%.17g, "
                         "\"K\":%d, "
-                        "\"err\":%.17g, "
+                        "\"REL_ERR\":%.17g, "
                         "\"result\":\"BEST\", "
-                        "\"hamming\":%u, "
-                        "\"code\":\"%s\""
+                        "\"HAMMING_DISTANCE\":%u, "
+                        "\"RPN\":\"%s\""
                         "}",
 #ifdef USE_COMPLEX
                         creal(data[i].x), creal(data[i].y), targets[i].best_K, targets[i].best_err, hamming, code);
