@@ -9,17 +9,26 @@ function loadWasmModule(domain) {
     
     initializationPromise = new Promise((resolve, reject) => {
         try {
+            self.Module = {
+                onRuntimeInitialized: () => {
+                    isReady = true;
+                    postMessage({type: 'ready'});
+                    resolve();
+                }
+            };
+            
             if (domain === 'complex') {
                 importScripts('vsearch_complex.js');
             } else {
                 importScripts('vsearch.js');
             }
             
-            Module.onRuntimeInitialized = () => {
+            // In case WASM was already synchronously initialized during importScripts
+            if (self.Module.calledRun) {
                 isReady = true;
                 postMessage({type: 'ready'});
                 resolve();
-            };
+            }
         } catch (e) {
             console.error("Failed to load WASM module", e);
             reject(e);
