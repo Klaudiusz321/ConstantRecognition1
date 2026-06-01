@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { SearchResult, Filters, Precision, ActiveWorker, defaultFilters, ErrorMode, ComputeMode, RecognitionTarget, Domain, CalculatorMode } from './lib/types';
+import { SearchResult, Filters, Precision, ActiveWorker, defaultFilters, ErrorMode, ComputeMode, RecognitionTarget, Domain, CalculatorMode, SearchCalculatorSpec } from './lib/types';
 import { CalculatorId, DEFAULT_CALCULATOR_ID, getCalculatorById } from './lib/calculators';
 import { evaluateRPNDisplay } from './lib/rpn';
 import { formatComplexValue, parseSearchInput, resolveInputUncertainty } from './lib/input';
@@ -50,6 +50,7 @@ export default function CalculatorPage() {
   const [domain, setDomain] = useState<Domain>('real');
   const [calculatorMode, setCalculatorMode] = useState<CalculatorMode>('standard');
   const [inputError, setInputError] = useState<string | null>(null);
+  const [customCalculatorSpec, setCustomCalculatorSpec] = useState<SearchCalculatorSpec | null>(null);
   
   const workersRef = useRef<Worker[]>([]);
   const isAbortedRef = useRef(false);
@@ -69,11 +70,22 @@ export default function CalculatorPage() {
     () => getCalculatorById(selectedCalculatorId),
     [selectedCalculatorId]
   );
-  const calculatorSpec = useMemo(() => ({
-    consts: [...selectedCalculator.constantsCore, ...selectedCalculator.constantsRedundant],
+  const defaultCalculatorSpec = useMemo<SearchCalculatorSpec>(() => ({
+    consts: [...selectedCalculator.constantsCore, ...selectedCalculator.constantsRedundant]
+      .filter((token) => domain === 'complex' || token !== 'I'),
     funcs: [...selectedCalculator.unaryCore, ...selectedCalculator.unaryRedundant],
     ops: [...selectedCalculator.operatorsCommutative, ...selectedCalculator.operatorsNoncommutative],
-  }), [selectedCalculator]);
+  }), [domain, selectedCalculator]);
+  const calculatorSpec = useMemo<SearchCalculatorSpec>(() => {
+    if (calculatorMode === 'standard' || calculatorMode === 'fire_everything') return defaultCalculatorSpec;
+    if (!customCalculatorSpec) return defaultCalculatorSpec;
+    const consts = customCalculatorSpec.consts.filter((token) => domain === 'complex' || token !== 'I');
+    return {
+      consts: consts.length > 0 ? consts : defaultCalculatorSpec.consts.slice(0, 1),
+      funcs: customCalculatorSpec.funcs,
+      ops: customCalculatorSpec.ops,
+    };
+  }, [calculatorMode, customCalculatorSpec, defaultCalculatorSpec, domain]);
   
   // Helper to calculate compression ratio
   const getCompressionRatio = (r: SearchResult): number => {
@@ -292,7 +304,6 @@ export default function CalculatorPage() {
 
     const gpuCompatible =
       recognitionTarget === 'constant' &&
-      domain === 'real' &&
       calculatorMode === 'standard';
 
     const shouldUseGpu = gpuCompatible && gpuAvailable && (
@@ -304,15 +315,17 @@ export default function CalculatorPage() {
     if (shouldUseGpu) {
       setActiveWorkers([]);
       try {
-        const gpuResults = await searchGPU(zNum, {
+        const gpuTarget = domain === 'complex' ? targetValue : zNum;
+        const gpuResults = await searchGPU(gpuTarget, {
           minK: 1,
-          maxK: searchDepth
+          maxK: searchDepth,
+          domain
         });
 
         const mappedResults: SearchResult[] = gpuResults.map(result => {
           let numericValue: string;
           try {
-            numericValue = evaluateRPNDisplay(result.RPN, 'real');
+            numericValue = evaluateRPNDisplay(result.RPN, domain);
           } catch {
             numericValue = 'N/A';
           }
@@ -328,9 +341,6 @@ export default function CalculatorPage() {
         });
 
         setResults(mappedResults);
-      } catch (err) {
-        console.error('GPU search failed:', err);
-      } finally {
         if (timerRef.current) {
           clearInterval(timerRef.current);
           timerRef.current = null;
@@ -338,8 +348,10 @@ export default function CalculatorPage() {
         setElapsedTime(Date.now() - startTimeRef.current);
         setIsCalculating(false);
         setSearchFinished(true);
+        return;
+      } catch (err) {
+        console.warn('GPU search failed, falling back to CPU/WASM:', err);
       }
-      return;
     }
 
     // CPU/WASM computation
@@ -494,6 +506,9 @@ export default function CalculatorPage() {
         setDomain={setDomain}
         calculatorMode={calculatorMode}
         setCalculatorMode={setCalculatorMode}
+        calculatorSpec={calculatorSpec}
+        defaultCalculatorSpec={defaultCalculatorSpec}
+        setCustomCalculatorSpec={setCustomCalculatorSpec}
       />
 
       {/* Main content */}

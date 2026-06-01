@@ -19,14 +19,18 @@ export type {
 // Re-export RPN utilities
 export { 
   evaluateShortRPN, 
+  evaluateShortRPNComplex,
   indexToRPN,
   CONST_CHARS,
+  CONST_CHARS_COMPLEX,
   UNARY_CHARS,
   BINARY_CHARS,
   N_CONST,
+  N_CONST_COMPLEX,
   N_UNARY,
   N_BINARY
 } from './rpn-evaluator';
+export type { ComplexNumber, SearchDomain } from './rpn-evaluator';
 
 // Re-export form generator
 export { 

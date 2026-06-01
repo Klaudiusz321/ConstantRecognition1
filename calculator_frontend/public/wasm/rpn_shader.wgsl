@@ -10,6 +10,7 @@ const PI: f32 = 3.14159265358979323846;
 const E: f32 = 2.71828182845904523536;
 const PHI: f32 = 1.61803398874989484820;  // Golden ratio
 const NEG_ONE: f32 = -1.0;
+const SQRT_TWO_PI: f32 = 2.50662827463100050242;
 
 const N_CONST: u32 = 13u;
 const N_UNARY: u32 = 18u;
@@ -84,8 +85,7 @@ fn apply_unary(op: u32, x: f32) -> f32 {
         case 0u: { return log(x); }           // ln
         case 1u: { return exp(x); }           // exp
         case 2u: { return 1.0 / x; }          // reciprocal
-        // case 3u: { return tgamma(x); }     // gamma - not in WGSL, skip
-        case 3u: { return x; }                // placeholder for gamma
+        case 3u: { return gamma_lanczos(x); }  // gamma
         case 4u: { return sqrt(x); }          // sqrt
         case 5u: { return x * x; }            // square
         case 6u: { return sin(x); }           // sin
@@ -102,6 +102,28 @@ fn apply_unary(op: u32, x: f32) -> f32 {
         case 17u: { return atanh(x); }        // atanh
         default: { return x; }
     }
+}
+
+fn gamma_lanczos_core(z: f32) -> f32 {
+    let shifted = z - 1.0;
+    var x = 0.99999999999980993;
+    x = x + 676.5203681218851 / (shifted + 1.0);
+    x = x - 1259.1392167224028 / (shifted + 2.0);
+    x = x + 771.32342877765313 / (shifted + 3.0);
+    x = x - 176.61502916214059 / (shifted + 4.0);
+    x = x + 12.507343278686905 / (shifted + 5.0);
+    x = x - 0.13857109526572012 / (shifted + 6.0);
+    x = x + 0.000009984369578019572 / (shifted + 7.0);
+    x = x + 0.00000015056327351493116 / (shifted + 8.0);
+    let t = shifted + 7.5;
+    return SQRT_TWO_PI * pow(t, shifted + 0.5) * exp(-t) * x;
+}
+
+fn gamma_lanczos(z: f32) -> f32 {
+    if (z < 0.5) {
+        return PI / (sin(PI * z) * gamma_lanczos_core(1.0 - z));
+    }
+    return gamma_lanczos_core(z);
 }
 
 // ============================================================================

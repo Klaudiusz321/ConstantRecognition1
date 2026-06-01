@@ -44,6 +44,65 @@ function allocateDoubleArray(arr) {
     return ptr;
 }
 
+function parseRealToken(value) {
+    const str = String(value || '')
+        .trim()
+        .replace(/\u2212/g, '-')
+        .replace(/\u03c0/gi, 'pi')
+        .replace(/\u03c6/gi, 'phi')
+        .toLowerCase();
+
+    if (str === 'pi' || str === 'p') return Math.PI;
+    if (str === 'e') return Math.E;
+    if (str === 'phi' || str === 'goldenratio') return (1 + Math.sqrt(5)) / 2;
+
+    return parseFloat(str);
+}
+
+function parseImaginaryToken(value) {
+    if (value === '' || value === '+') return 1;
+    if (value === '-') return -1;
+    return parseRealToken(value);
+}
+
+function splitComplexCore(core) {
+    for (let j = core.length - 1; j > 0; j--) {
+        if ((core[j] === '+' || core[j] === '-') && core[j - 1] !== 'e') {
+            return j;
+        }
+    }
+    return -1;
+}
+
+function parseComplexInput(value) {
+    const str = String(value || '')
+        .replace(/\s/g, '')
+        .replace(/\u2212/g, '-')
+        .replace(/\u03c0/gi, 'pi')
+        .replace(/\u03c6/gi, 'phi')
+        .toLowerCase();
+
+    if (str === 'i' || str === '+i') return { r: 0, i: 1 };
+    if (str === '-i') return { r: 0, i: -1 };
+
+    if (str.endsWith('i')) {
+        const core = str.slice(0, -1);
+        const splitIdx = splitComplexCore(core);
+
+        if (splitIdx !== -1) {
+            const r = parseRealToken(core.slice(0, splitIdx));
+            const i = parseImaginaryToken(core.slice(splitIdx));
+            return { r: isNaN(r) ? 0 : r, i: isNaN(i) ? 0 : i };
+        }
+
+        const i = parseImaginaryToken(core);
+        return { r: 0, i: isNaN(i) ? 0 : i };
+    }
+
+    const r = parseRealToken(str);
+    return { r: isNaN(r) ? 0 : r, i: 0 };
+}
+
 function doWork(initDelay, z, targetValue, inputValue, recognitionTarget, calculatorMode, calculatorSpec, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, earlyExitCRThreshold, domain) {
     return new Promise(resolve => {
         setTimeout(() => {
@@ -57,45 +116,13 @@ function doWork(initDelay, z, targetValue, inputValue, recognitionTarget, calcul
                         const parts = p.split(/[:,]/);
                         if (parts.length >= 2) {
                             if (domain === 'complex') {
-                                const parseComplex = (str) => {
-                                    str = str.replace(/\s/g, '').toLowerCase();
-                                    let r = 0, i = 0;
-                                    if (str.endsWith('i')) {
-                                        let core = str.slice(0, -1);
-                                        if (core === '' || core === '+') { r = 0; i = 1; }
-                                        else if (core === '-') { r = 0; i = -1; }
-                                        else {
-                                            let splitIdx = -1;
-                                            for (let j = core.length - 1; j > 0; j--) {
-                                                if ((core[j] === '+' || core[j] === '-') && core[j-1] !== 'e') {
-                                                    splitIdx = j;
-                                                    break;
-                                                }
-                                            }
-                                            if (splitIdx !== -1) {
-                                                let rStr = core.slice(0, splitIdx);
-                                                let iStr = core.slice(splitIdx);
-                                                r = parseFloat(rStr);
-                                                if (iStr === '+' || iStr === '-') iStr += '1';
-                                                i = parseFloat(iStr);
-                                            } else {
-                                                r = 0;
-                                                i = parseFloat(core);
-                                            }
-                                        }
-                                    } else {
-                                        r = parseFloat(str);
-                                        i = 0;
-                                    }
-                                    return { r: isNaN(r) ? 0 : r, i: isNaN(i) ? 0 : i };
-                                };
-                                const px = parseComplex(parts[0]);
-                                const py = parseComplex(parts[1]);
+                                const px = parseComplexInput(parts[0]);
+                                const py = parseComplexInput(parts[1]);
                                 x_real.push(px.r); x_imag.push(px.i);
                                 y_real.push(py.r); y_imag.push(py.i);
                             } else {
-                                x_real.push(parseFloat(parts[0]));
-                                y_real.push(parseFloat(parts[1]));
+                                x_real.push(parseRealToken(parts[0]));
+                                y_real.push(parseRealToken(parts[1]));
                             }
                         }
                     });
@@ -125,41 +152,9 @@ function doWork(initDelay, z, targetValue, inputValue, recognitionTarget, calcul
                 } else if (recognitionTarget === 'multiple' || recognitionTarget === 'sequence') {
                     let values = [];
                     if (domain === 'complex') {
-                        const parseComplex = (str) => {
-                            str = str.replace(/\s/g, '').toLowerCase();
-                            let r = 0, i = 0;
-                            if (str.endsWith('i')) {
-                                let core = str.slice(0, -1);
-                                if (core === '' || core === '+') { r = 0; i = 1; }
-                                else if (core === '-') { r = 0; i = -1; }
-                                else {
-                                    let splitIdx = -1;
-                                    for (let j = core.length - 1; j > 0; j--) {
-                                        if ((core[j] === '+' || core[j] === '-') && core[j-1] !== 'e') {
-                                            splitIdx = j;
-                                            break;
-                                        }
-                                    }
-                                    if (splitIdx !== -1) {
-                                        let rStr = core.slice(0, splitIdx);
-                                        let iStr = core.slice(splitIdx);
-                                        r = parseFloat(rStr);
-                                        if (iStr === '+' || iStr === '-') iStr += '1';
-                                        i = parseFloat(iStr);
-                                    } else {
-                                        r = 0;
-                                        i = parseFloat(core);
-                                    }
-                                }
-                            } else {
-                                r = parseFloat(str);
-                                i = 0;
-                            }
-                            return { r: isNaN(r) ? 0 : r, i: isNaN(i) ? 0 : i };
-                        };
-                        values = inputValue.split(/[,;\n]/).map(v => parseComplex(v.trim()));
+                        values = inputValue.split(/[,;\n]/).map(v => v.trim()).filter(Boolean).map(parseComplexInput);
                     } else {
-                        values = inputValue.split(/[,;\n]/).map(v => parseFloat(v.trim())).filter(v => !isNaN(v));
+                        values = inputValue.split(/[,;\n]/).map(v => parseRealToken(v.trim())).filter(v => !isNaN(v));
                     }
                     
                     if (values.length > 0) {
@@ -197,42 +192,15 @@ function doWork(initDelay, z, targetValue, inputValue, recognitionTarget, calcul
                         z_real = targetValue.real;
                         z_imag = targetValue.imag;
                     } else {
-                    let str = inputValue.replace(/\s/g, '').toLowerCase();
-                    if (str.endsWith('i')) {
-                        let core = str.slice(0, -1);
-                        if (core === '' || core === '+') { z_real = 0; z_imag = 1; }
-                        else if (core === '-') { z_real = 0; z_imag = -1; }
-                        else {
-                            let splitIdx = -1;
-                            for (let j = core.length - 1; j > 0; j--) {
-                                if ((core[j] === '+' || core[j] === '-') && core[j-1] !== 'e') {
-                                    splitIdx = j;
-                                    break;
-                                }
-                            }
-                            if (splitIdx !== -1) {
-                                let rStr = core.slice(0, splitIdx);
-                                let iStr = core.slice(splitIdx);
-                                z_real = parseFloat(rStr);
-                                if (iStr === '+' || iStr === '-') iStr += '1';
-                                z_imag = parseFloat(iStr);
-                            } else {
-                                z_real = 0;
-                                z_imag = parseFloat(core);
-                            }
-                        }
-                    } else {
-                        z_real = parseFloat(str);
-                        z_imag = 0;
-                    }
-                    if (isNaN(z_real)) z_real = 0;
-                    if (isNaN(z_imag)) z_imag = 0;
+                        const parsed = parseComplexInput(inputValue);
+                        z_real = parsed.r;
+                        z_imag = parsed.i;
                     }
                 } else {
-                    z_real = targetValue && Number.isFinite(targetValue.real) ? targetValue.real : z;
+                    z_real = targetValue && Number.isFinite(targetValue.real) ? targetValue.real : parseRealToken(z);
                 }
 
-                if (calculatorMode === 'list' || calculatorMode === 'custom') {
+                if (calculatorMode === 'list' || calculatorMode === 'custom' || calculatorMode === 'fire_everything') {
                     const constList = (calculatorSpec?.consts || []).join(',');
                     const funcList = (calculatorSpec?.funcs || []).join(',');
                     const opList = (calculatorSpec?.ops || []).join(',');

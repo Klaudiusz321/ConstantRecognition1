@@ -63,6 +63,7 @@ export function gamma(z: number): number {
 // CONST_CHARS = '0123opqrstuvw' (13 chars)
 const SHORT_CONST_MAP: Record<string, string> = {
   '0': 'PI', '1': 'EULER', '2': 'NEG', '3': 'GOLDENRATIO',
+  'I': 'I',
   'o': 'ONE', 'p': 'TWO', 'q': 'THREE', 'r': 'FOUR', 's': 'FIVE',
   't': 'SIX', 'u': 'SEVEN', 'v': 'EIGHT', 'w': 'NINE'
 };

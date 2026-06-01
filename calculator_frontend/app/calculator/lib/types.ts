@@ -27,6 +27,12 @@ export interface SearchResult {
   fp64Evals?: number;
 }
 
+export interface SearchCalculatorSpec {
+  consts: string[];
+  funcs: string[];
+  ops: string[];
+}
+
 export interface Filters {
   maxRelErr: number | null;  // Max relative error threshold (e.g. 1e-10)
   minCR: number | null;      // Min compression ratio threshold

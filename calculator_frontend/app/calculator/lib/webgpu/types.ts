@@ -123,6 +123,7 @@ export interface GPUSearchResult {
   error: number;
   status: string;
   cpuId: number;
+  domain?: 'real' | 'complex';
 }
 
 export interface GPUInfo {
@@ -148,6 +149,7 @@ export interface Candidate {
 export interface SearchOptions {
   minK?: number;
   maxK?: number;
+  domain?: 'real' | 'complex';
   onProgress?: (info: { K: number; forms: number; evaluated: number }) => void;
   onResult?: (result: GPUSearchResult) => void;
 }

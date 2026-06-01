@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
-import { ActiveWorker, Precision, ErrorMode, ComputeMode, RecognitionTarget, Domain, CalculatorMode } from '../lib/types';
-import { CALCULATORS, CalculatorId, getCalculatorById } from '../lib/calculators';
+import { ActiveWorker, Precision, ErrorMode, ComputeMode, RecognitionTarget, Domain, CalculatorMode, SearchCalculatorSpec } from '../lib/types';
+import { CALCULATORS, CalculatorId, calculatorTokenLabel, getCalculatorById } from '../lib/calculators';
 import { CalculatorPalette } from './CalculatorPalette';
 
 const withBasePath = (path: string) => {
@@ -51,6 +51,9 @@ interface SidebarProps {
   setDomain: (domain: Domain) => void;
   calculatorMode: CalculatorMode;
   setCalculatorMode: (mode: CalculatorMode) => void;
+  calculatorSpec: SearchCalculatorSpec;
+  defaultCalculatorSpec: SearchCalculatorSpec;
+  setCustomCalculatorSpec: (spec: SearchCalculatorSpec) => void;
 }
 
 export function Sidebar({
@@ -87,11 +90,17 @@ export function Sidebar({
   setDomain,
   calculatorMode,
   setCalculatorMode,
+  calculatorSpec,
+  defaultCalculatorSpec,
+  setCustomCalculatorSpec,
 }: SidebarProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const selectedCalculator = getCalculatorById(selectedCalculatorId);
+  const displayedCalculator = {
+    ...selectedCalculator,
+    constantsCore: selectedCalculator.constantsCore.filter((token) => domain === 'complex' || token !== 'I'),
+  };
   const gpuSearchCompatible =
-    domain === 'real' &&
     recognitionTarget === 'constant' &&
     calculatorMode === 'standard';
   const gpuSearchActive =
@@ -107,6 +116,94 @@ export function Sidebar({
     : toleranceSearchActive
       ? 'Applies to CPU/WASM tolerance-based search.'
       : 'Ignored for exact search (+/- 0). Use Auto or Manual uncertainty to enable it.';
+  const selectableCalculatorSpec = calculatorMode === 'fire_everything'
+    ? defaultCalculatorSpec
+    : calculatorSpec;
+  const selectedButtonCount =
+    selectableCalculatorSpec.consts.length +
+    selectableCalculatorSpec.funcs.length +
+    selectableCalculatorSpec.ops.length;
+
+  const orderTokens = (
+    group: keyof SearchCalculatorSpec,
+    tokens: string[],
+  ) => defaultCalculatorSpec[group].filter((token) => tokens.includes(token));
+
+  const updateCalculatorMode = (mode: CalculatorMode) => {
+    setCalculatorMode(mode);
+    if (mode === 'list' || mode === 'custom') {
+      setCustomCalculatorSpec(calculatorSpec);
+    }
+    if (mode === 'fire_everything') {
+      setCustomCalculatorSpec(defaultCalculatorSpec);
+    }
+  };
+
+  const toggleCalculatorToken = (group: keyof SearchCalculatorSpec, token: string) => {
+    const current = calculatorMode === 'standard' || calculatorMode === 'fire_everything'
+      ? defaultCalculatorSpec
+      : calculatorSpec;
+    const values = current[group];
+    const hasToken = values.includes(token);
+
+    if (hasToken && group === 'consts' && values.length === 1) return;
+
+    const nextValues = hasToken
+      ? values.filter((value) => value !== token)
+      : orderTokens(group, [...values, token]);
+
+    setCustomCalculatorSpec({
+      ...current,
+      [group]: nextValues,
+    });
+  };
+
+  const resetCalculatorSpec = () => {
+    setCustomCalculatorSpec(defaultCalculatorSpec);
+  };
+
+  const renderTokenGroup = (
+    label: string,
+    group: keyof SearchCalculatorSpec,
+    tokens: string[],
+  ) => (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-500">
+          {label}
+        </span>
+        <span className="text-[10px] font-mono text-gray-400">
+          {selectableCalculatorSpec[group].length}/{tokens.length}
+        </span>
+      </div>
+      <div className="grid grid-cols-3 gap-1.5">
+        {tokens.map((token) => {
+          const selected = selectableCalculatorSpec[group].includes(token);
+          return (
+            <button
+              key={token}
+              type="button"
+              onClick={() => toggleCalculatorToken(group, token)}
+              disabled={calculatorMode === 'fire_everything'}
+              className={`rounded-md border px-2 py-2 text-left transition-colors ${
+                selected
+                  ? 'border-[#0066cc] bg-[#0066cc]/10 text-[#0066cc] dark:bg-[#0066cc]/20 dark:text-blue-300'
+                  : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50 dark:border-[#2a2a2e] dark:bg-[#111113] dark:text-gray-400 dark:hover:bg-[#2a2a2e]'
+              } disabled:cursor-not-allowed disabled:opacity-80`}
+              title={token}
+            >
+              <span className="block text-sm font-semibold leading-none">
+                {calculatorTokenLabel[token] ?? token}
+              </span>
+              <span className="mt-1 block truncate text-[9px] uppercase tracking-wide">
+                {token}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -337,7 +434,7 @@ export function Sidebar({
             <div className="text-[10px] text-gray-400 dark:text-gray-500">
               {computeMode === 'auto' && (
                 gpuAvailable && gpuSearchCompatible
-                  ? <span className="text-green-600 dark:text-green-400">Will use GPU (WebGPU available)</span>
+                  ? <span className="text-green-600 dark:text-green-400">Will use GPU (WebGPU available, {domain})</span>
                   : <span>Will use CPU/WASM</span>
               )}
               {computeMode === 'cpu' && (
@@ -345,12 +442,12 @@ export function Sidebar({
               )}
               {computeMode === 'gpu' && (
                 gpuAvailable && gpuSearchCompatible
-                  ? <span className="text-green-600 dark:text-green-400">{gpuName || 'WebGPU'}</span>
+                  ? <span className="text-green-600 dark:text-green-400">{gpuName || 'WebGPU'} ({domain})</span>
                   : <span className="text-amber-600 dark:text-amber-400">⚠️ GPU unavailable, will use CPU</span>
               )}
               {computeMode === 'apple_silicon' && (
                 gpuAvailable && gpuSearchCompatible
-                  ? <span className="text-green-600 dark:text-green-400">Apple Silicon via browser WebGPU</span>
+                  ? <span className="text-green-600 dark:text-green-400">Apple Silicon via browser WebGPU/Metal ({domain})</span>
                   : <span className="text-amber-600 dark:text-amber-400">Apple Silicon path unavailable for this search, will use CPU</span>
               )}
             </div>
@@ -569,7 +666,7 @@ export function Sidebar({
                 </label>
                 <select
                   value={calculatorMode}
-                  onChange={(e) => setCalculatorMode(e.target.value as CalculatorMode)}
+                  onChange={(e) => updateCalculatorMode(e.target.value as CalculatorMode)}
                   className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-[#2a2a2e] dark:bg-[#111113] dark:text-white"
                 >
                   <option value="standard">Standard scientific calculator</option>
@@ -599,29 +696,47 @@ export function Sidebar({
                         {selectedCalculator.statusNote}
                       </p>
                     </div>
-                    <CalculatorPalette calculator={selectedCalculator} />
+                    <CalculatorPalette calculator={displayedCalculator} />
                   </div>
                 )}
                 
-                {calculatorMode === 'list' && (
-                  <div className="p-3 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded-lg text-sm">
-                    Function list selection will be implemented here.
-                  </div>
-                )}
-                
-                {calculatorMode === 'custom' && (
-                  <div className="p-3 bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 rounded-lg text-sm flex flex-col items-center gap-2">
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
-                    <span>Visual Node Builder Coming Soon</span>
-                  </div>
-                )}
-                
-                {calculatorMode === 'fire_everything' && (
-                  <div className="p-3 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 rounded-lg text-sm flex items-start gap-2">
-                    <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z" /></svg>
-                    <div>
-                      <strong>Warning:</strong> Exhaustive search across all functions is extremely computationally expensive.
+                {(calculatorMode === 'list' || calculatorMode === 'custom' || calculatorMode === 'fire_everything') && (
+                  <div className="space-y-4 rounded-lg border border-gray-200 bg-gray-50/70 p-3 dark:border-[#2a2a2e] dark:bg-[#111113]/70">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-gray-900 dark:text-white">
+                          {selectedButtonCount} active buttons
+                        </div>
+                        <div className="text-[10px] text-gray-500 dark:text-gray-400">
+                          {domain === 'complex' ? 'Complex CALC4 includes I.' : 'Real CALC4 excludes I.'}
+                        </div>
+                      </div>
+                      {calculatorMode !== 'fire_everything' && (
+                        <button
+                          type="button"
+                          onClick={resetCalculatorSpec}
+                          className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[10px] font-medium text-gray-600 hover:bg-gray-50 dark:border-[#2a2a2e] dark:bg-[#1a1a1d] dark:text-gray-300 dark:hover:bg-[#2a2a2e]"
+                        >
+                          Reset
+                        </button>
+                      )}
                     </div>
+
+                    {calculatorMode === 'custom' && (
+                      <div className="rounded-md border border-dashed border-[#0066cc]/40 bg-[#0066cc]/5 p-2 text-[11px] text-gray-600 dark:text-gray-300">
+                        Custom operation set
+                      </div>
+                    )}
+
+                    {calculatorMode === 'fire_everything' && (
+                      <div className="rounded-md bg-amber-50 p-2 text-[11px] text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                        Full domain operation set
+                      </div>
+                    )}
+
+                    {renderTokenGroup('Constants', 'consts', defaultCalculatorSpec.consts)}
+                    {renderTokenGroup('Functions', 'funcs', defaultCalculatorSpec.funcs)}
+                    {renderTokenGroup('Operators', 'ops', defaultCalculatorSpec.ops)}
                   </div>
                 )}
               </div>

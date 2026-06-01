@@ -8,6 +8,7 @@ import {
   resolveInputUncertainty,
 } from '../app/calculator/lib/input';
 import { evaluateRPNComplex, evaluateRPNDisplay } from '../app/calculator/lib/rpn';
+import { evaluateShortRPNComplex, indexToRPN } from '../app/calculator/lib/webgpu';
 
 describe('Frontend Input Parsing Logic', () => {
   describe('parseFunctionInput (MODE_FUNCTION)', () => {
@@ -107,6 +108,16 @@ describe('Frontend Input Parsing Logic', () => {
       expect(result.real).toBeCloseTo(Math.exp(-Math.PI / 2), 15);
       expect(result.imag).toBeCloseTo(0, 15);
       expect(evaluateRPNDisplay('I, I, POWER', 'complex')).toBe('0.2078795763507619');
+    });
+  });
+
+  describe('Complex WebGPU short RPN helpers', () => {
+    it('maps complex constant slots with I as the 37th CALC4 button', () => {
+      expect(indexToRPN(4, [0], [14], 1, 'complex')).toBe('I');
+      const result = evaluateShortRPNComplex('IIz');
+      expect(result.real).toBeCloseTo(Math.exp(-Math.PI / 2), 15);
+      expect(result.imag).toBeCloseTo(0, 15);
+      expect(evaluateRPNDisplay('IIz', 'complex')).toBe('0.2078795763507619');
     });
   });
 });

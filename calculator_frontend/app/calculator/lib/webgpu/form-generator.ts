@@ -3,7 +3,7 @@
  * Generates syntactically valid RPN forms for a given K
  */
 
-import { N_CONST, N_UNARY, N_BINARY } from './rpn-evaluator';
+import { N_CONST, N_CONST_COMPLEX, N_UNARY, N_BINARY, SearchDomain } from './rpn-evaluator';
 import type { FormDescriptor } from './types';
 
 /**
@@ -31,9 +31,10 @@ export function checkSyntax3(ternary: number[]): boolean {
  * @param K - Formula length (number of tokens)
  * @returns Array of valid form descriptors
  */
-export function generateValidForms(K: number): FormDescriptor[] {
+export function generateValidForms(K: number, domain: SearchDomain = 'real'): FormDescriptor[] {
   const forms: FormDescriptor[] = [];
   const total = Math.pow(3, K);
+  const nConst = domain === 'complex' ? N_CONST_COMPLEX : N_CONST;
 
   for (let i = 0; i < total; i++) {
     // Convert index to ternary representation
@@ -48,7 +49,7 @@ export function generateValidForms(K: number): FormDescriptor[] {
     if (checkSyntax3(form)) {
       // Calculate radix for each position based on form type
       const radix = form.map(t => {
-        if (t === 0) return N_CONST;   // 13 constants
+        if (t === 0) return nConst;
         if (t === 1) return N_UNARY;   // 18 unary ops
         return N_BINARY;               // 5 binary ops
       });
@@ -69,7 +70,7 @@ export function generateValidForms(K: number): FormDescriptor[] {
  * @param K - Formula length
  * @returns Total combinations across all valid forms
  */
-export function getTotalCombinations(K: number): number {
-  const forms = generateValidForms(K);
+export function getTotalCombinations(K: number, domain: SearchDomain = 'real'): number {
+  const forms = generateValidForms(K, domain);
   return forms.reduce((sum, form) => sum + form.totalCombinations, 0);
 }
