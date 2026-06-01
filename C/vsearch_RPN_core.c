@@ -133,6 +133,16 @@ static int ternary_increment(char* ternary, int K) {
  * MODE_FUNCTION: indices[i] ∈ [0, n_const] → 0=x, 1..n_const=constants
  * ============================================================================ */
 
+#ifdef USE_COMPLEX
+static inline calc_type clean_complex(calc_type z) {
+    double r = creal(z);
+    double i = cimag(z);
+    if (r == 0.0) r = 0.0;
+    if (i == 0.0) i = 0.0;
+    return r + i * I;
+}
+#endif
+
 static calc_type evaluate_expression(
     const char* ternary, const int* indices, int K,
     const ConstOp* const_ops, int n_const,
@@ -161,6 +171,9 @@ static calc_type evaluate_expression(
                 } else {
                     stack[sp++] = const_ops[indices[i]].value;
                 }
+#ifdef USE_COMPLEX
+                stack[sp-1] = clean_complex(stack[sp-1]);
+#endif
                 break;
                 
             case 1:  /* Unary function */
@@ -170,6 +183,9 @@ static calc_type evaluate_expression(
                 if (sp < 1) return nan("");
 #endif
                 stack[sp-1] = unary_ops[indices[i]].func(stack[sp-1]);
+#ifdef USE_COMPLEX
+                stack[sp-1] = clean_complex(stack[sp-1]);
+#endif
                 break;
                 
             case 2:  /* Binary operator */
@@ -182,6 +198,9 @@ static calc_type evaluate_expression(
                 calc_type b = stack[sp];
                 calc_type a = stack[sp-1];
                 stack[sp-1] = binary_ops[indices[i]].func(b, a);
+#ifdef USE_COMPLEX
+                stack[sp-1] = clean_complex(stack[sp-1]);
+#endif
                 break;
         }
     }

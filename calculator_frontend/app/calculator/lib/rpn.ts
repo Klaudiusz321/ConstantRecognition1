@@ -208,28 +208,33 @@ const complexConstants: Record<string, ComplexValue> = {
   "I": { real: 0, imag: 1 }
 };
 
-const cadd = (a: ComplexValue, b: ComplexValue): ComplexValue => ({ real: a.real + b.real, imag: a.imag + b.imag });
-const csub = (a: ComplexValue, b: ComplexValue): ComplexValue => ({ real: a.real - b.real, imag: a.imag - b.imag });
-const cmul = (a: ComplexValue, b: ComplexValue): ComplexValue => ({ real: a.real * b.real - a.imag * b.imag, imag: a.real * b.imag + a.imag * b.real });
+const cleanComplex = (z: ComplexValue): ComplexValue => ({
+  real: z.real === 0 ? 0 : z.real,
+  imag: z.imag === 0 ? 0 : z.imag
+});
+
+
+const cadd = (a: ComplexValue, b: ComplexValue): ComplexValue => cleanComplex({ real: a.real + b.real, imag: a.imag + b.imag });
+const csub = (a: ComplexValue, b: ComplexValue): ComplexValue => cleanComplex({ real: a.real - b.real, imag: a.imag - b.imag });
+const cmul = (a: ComplexValue, b: ComplexValue): ComplexValue => cleanComplex({ real: a.real * b.real - a.imag * b.imag, imag: a.real * b.imag + a.imag * b.real });
 const cdiv = (a: ComplexValue, b: ComplexValue): ComplexValue => {
   const denom = b.real * b.real + b.imag * b.imag;
-  return { real: (a.real * b.real + a.imag * b.imag) / denom, imag: (a.imag * b.real - a.real * b.imag) / denom };
+  return cleanComplex({ real: (a.real * b.real + a.imag * b.imag) / denom, imag: (a.imag * b.real - a.real * b.imag) / denom });
 };
 const cexp = (z: ComplexValue): ComplexValue => {
   const scale = Math.exp(z.real);
   return { real: scale * Math.cos(z.imag), imag: scale * Math.sin(z.imag) };
 };
 const clog = (z: ComplexValue): ComplexValue => ({ real: Math.log(Math.hypot(z.real, z.imag)), imag: Math.atan2(z.imag, z.real) });
-const cpow = (a: ComplexValue, b: ComplexValue): ComplexValue => cexp(cmul(b, clog(a)));
+const cpow = (a: ComplexValue, b: ComplexValue): ComplexValue => cleanComplex(cexp(cmul(b, clog(a))));
 const csqrt = (z: ComplexValue): ComplexValue => {
   const r = Math.hypot(z.real, z.imag);
   let sign = 1;
   if (z.imag < 0) sign = -1;
-  else if (Object.is(z.imag, -0)) sign = -1;
-  return {
+  return cleanComplex({
     real: Math.sqrt((r + z.real) / 2),
     imag: sign * Math.sqrt(Math.max(0, (r - z.real) / 2))
-  };
+  });
 };
 const csin = (z: ComplexValue): ComplexValue => ({ real: Math.sin(z.real) * Math.cosh(z.imag), imag: Math.cos(z.real) * Math.sinh(z.imag) });
 const ccos = (z: ComplexValue): ComplexValue => ({ real: Math.cos(z.real) * Math.cosh(z.imag), imag: -Math.sin(z.real) * Math.sinh(z.imag) });
