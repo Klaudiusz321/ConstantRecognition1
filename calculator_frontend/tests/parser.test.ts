@@ -1,36 +1,24 @@
 import { describe, it, expect } from 'vitest';
-
-// We extract the parsing logic that is used in worker.js and page.tsx 
-// into an easily testable format.
-function parseFunctionInput(inputValue) {
-    const pairs = inputValue.split(/[\n;]/).map(p => p.trim()).filter(p => p);
-    const x_arr = [];
-    const y_arr = [];
-    pairs.forEach(p => {
-        const parts = p.split(/[:,]/);
-        if (parts.length >= 2) {
-            x_arr.push(parseFloat(parts[0]));
-            y_arr.push(parseFloat(parts[1]));
-        }
-    });
-    return { x_arr, y_arr };
-}
-
-function parseMultipleConstants(inputValue) {
-    return inputValue.split(/[,;\n]/).map(v => parseFloat(v.trim())).filter(v => !isNaN(v));
-}
+import {
+  extractInputPrecision,
+  parseComplexLiteral,
+  parseFunctionInput,
+  parseMultipleConstants,
+  parseSearchInput,
+  resolveInputUncertainty,
+} from '../app/calculator/lib/input';
+import { evaluateRPNComplex, evaluateRPNDisplay } from '../app/calculator/lib/rpn';
 
 describe('Frontend Input Parsing Logic', () => {
-  
   describe('parseFunctionInput (MODE_FUNCTION)', () => {
-    it('should parse semi-colon separated pairs', () => {
-      const input = "1:1; 2:4; 3:9";
+    it('parses semi-colon separated pairs', () => {
+      const input = '1:1; 2:4; 3:9';
       const { x_arr, y_arr } = parseFunctionInput(input);
       expect(x_arr).toEqual([1, 2, 3]);
       expect(y_arr).toEqual([1, 4, 9]);
     });
 
-    it('should parse newline separated comma pairs', () => {
+    it('parses newline separated comma pairs', () => {
       const input = `
         1,1
         2,4
@@ -41,8 +29,8 @@ describe('Frontend Input Parsing Logic', () => {
       expect(y_arr).toEqual([1, 4, 9]);
     });
 
-    it('should ignore invalid pairs', () => {
-      const input = "1:1; invalid; 3:9";
+    it('ignores invalid pairs', () => {
+      const input = '1:1; invalid; 3:9';
       const { x_arr, y_arr } = parseFunctionInput(input);
       expect(x_arr).toEqual([1, 3]);
       expect(y_arr).toEqual([1, 9]);
@@ -50,74 +38,75 @@ describe('Frontend Input Parsing Logic', () => {
   });
 
   describe('parseMultipleConstants (MODE_BATCH)', () => {
-    it('should parse comma-separated constants', () => {
-      const input = "3.14159, 2.71828, 1.61803";
+    it('parses comma-separated constants', () => {
+      const input = '3.14159, 2.71828, 1.61803';
       const vals = parseMultipleConstants(input);
       expect(vals).toEqual([3.14159, 2.71828, 1.61803]);
     });
 
-    it('should parse newline and semicolon-separated constants', () => {
-      const input = "3.14159; \n 2.71828; \n 1.61803";
-      const vals = parseMultipleConstants(input);
-      expect(vals).toEqual([3.14159, 2.71828, 1.61803]);
+    it('parses symbolic constants', () => {
+      const vals = parseMultipleConstants('Pi; e; phi');
+      expect(vals[0]).toBeCloseTo(Math.PI, 15);
+      expect(vals[1]).toBeCloseTo(Math.E, 15);
+      expect(vals[2]).toBeCloseTo((1 + Math.sqrt(5)) / 2, 15);
     });
 
-    it('should ignore NaN values', () => {
-      const input = "3.14159, abc, 2.71828";
+    it('ignores NaN values', () => {
+      const input = '3.14159, abc, 2.71828';
       const vals = parseMultipleConstants(input);
       expect(vals).toEqual([3.14159, 2.71828]);
     });
   });
 
-const parseComplex = (str) => {
-    str = str.replace(/\s/g, '').toLowerCase();
-    let r = 0, i = 0;
-    if (str.endsWith('i')) {
-        const core = str.slice(0, -1);
-        if (core === '' || core === '+') { r = 0; i = 1; }
-        else if (core === '-') { r = 0; i = -1; }
-        else {
-            let splitIdx = -1;
-            for (let j = core.length - 1; j > 0; j--) {
-                if ((core[j] === '+' || core[j] === '-') && core[j-1] !== 'e') {
-                    splitIdx = j;
-                    break;
-                }
-            }
-            if (splitIdx !== -1) {
-                const rStr = core.slice(0, splitIdx);
-                let iStr = core.slice(splitIdx);
-                r = parseFloat(rStr);
-                if (iStr === '+' || iStr === '-') iStr += '1';
-                i = parseFloat(iStr);
-            } else {
-                r = 0;
-                i = parseFloat(core);
-            }
-        }
-    } else {
-        r = parseFloat(str);
-        i = 0;
-    }
-    return { r: isNaN(r) ? 0 : r, i: isNaN(i) ? 0 : i };
-};
+  describe('Complex Parsing Logic', () => {
+    it('parses real numbers', () => {
+      expect(parseComplexLiteral('3.14')).toEqual({ real: 3.14, imag: 0 });
+      expect(parseComplexLiteral('-2.5')).toEqual({ real: -2.5, imag: 0 });
+    });
 
-describe('Complex Parsing Logic', () => {
-  it('should parse real numbers', () => {
-    expect(parseComplex("3.14")).toEqual({ r: 3.14, i: 0 });
-    expect(parseComplex("-2.5")).toEqual({ r: -2.5, i: 0 });
-  });
-  
-  it('should parse pure imaginary numbers', () => {
-    expect(parseComplex("3i")).toEqual({ r: 0, i: 3 });
-    expect(parseComplex("-2.5i")).toEqual({ r: 0, i: -2.5 });
+    it('parses pure imaginary numbers', () => {
+      expect(parseComplexLiteral('3i')).toEqual({ real: 0, imag: 3 });
+      expect(parseComplexLiteral('-2.5i')).toEqual({ real: 0, imag: -2.5 });
+    });
+
+    it('parses complex numbers with scientific notation', () => {
+      expect(parseComplexLiteral('3.14+2i')).toEqual({ real: 3.14, imag: 2 });
+      expect(parseComplexLiteral('-2.5-1.5i')).toEqual({ real: -2.5, imag: -1.5 });
+      expect(parseComplexLiteral('1e-3+2e-4i')).toEqual({ real: 0.001, imag: 0.0002 });
+    });
+
+    it('evaluates symbolic i^i on the principal branch', () => {
+      const parsed = parseSearchInput('i^i');
+      expect(parsed.real).toBeCloseTo(Math.exp(-Math.PI / 2), 15);
+      expect(parsed.imag).toBeCloseTo(0, 15);
+      expect(parsed.isComplex).toBe(true);
+    });
   });
 
-  it('should parse complex numbers', () => {
-    expect(parseComplex("3.14+2i")).toEqual({ r: 3.14, i: 2 });
-    expect(parseComplex("-2.5-1.5i")).toEqual({ r: -2.5, i: -1.5 });
-    expect(parseComplex("1+i")).toEqual({ r: 1, i: 1 });
-    expect(parseComplex("1-i")).toEqual({ r: 1, i: -1 });
+  describe('Precision modes', () => {
+    it('extracts precision from scientific notation', () => {
+      const precision = extractInputPrecision('1e-6');
+      expect(precision.deltaZ).toBe('5.00e-7');
+    });
+
+    it('uses a broad tolerance for large-error mode', () => {
+      const uncertainty = resolveInputUncertainty('100', 'large_errors', '', 100);
+      expect(uncertainty).toBe(5);
+    });
+
+    it('treats symbolic exact inputs as zero automatic display uncertainty', () => {
+      const precision = extractInputPrecision('Pi');
+      expect(precision.deltaZ).toBe('0');
+      expect(precision.relDeltaZ).toBe('0');
+    });
   });
-});
+
+  describe('Complex RPN display', () => {
+    it('evaluates I I POWER as i^i', () => {
+      const result = evaluateRPNComplex('I, I, POWER');
+      expect(result.real).toBeCloseTo(Math.exp(-Math.PI / 2), 15);
+      expect(result.imag).toBeCloseTo(0, 15);
+      expect(evaluateRPNDisplay('I, I, POWER', 'complex')).toBe('0.2078795763507619');
+    });
+  });
 });

@@ -20,8 +20,8 @@ export const CALCULATORS: CalculatorDefinition[] = [
     name: 'CALC4',
     shortName: '36-button scientific RPN calculator',
     description: 'Default search calculator used by the current WASM and CPU backends.',
-    statusNote: 'Display only for now: search still runs with CALC4 regardless of this selector.',
-    constantsCore: ['PI', 'EULER', 'NEG', 'GOLDENRATIO'],
+    statusNote: 'Real search uses 36 buttons; complex search adds I as the 37th button.',
+    constantsCore: ['PI', 'EULER', 'NEG', 'GOLDENRATIO', 'I'],
     constantsRedundant: ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE'],
     unaryCore: ['LOG', 'EXP'],
     unaryRedundant: [
@@ -90,3 +90,4 @@ export const calculatorTokenLabel: Record<string, string> = {
   DIVIDE: '/',
   POWER: 'xʸ',
 };
+calculatorTokenLabel.I = 'i';

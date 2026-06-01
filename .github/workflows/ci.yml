@@ -42,8 +42,14 @@ jobs:
     - name: Install GCC
       run: sudo apt-get update && sudo apt-get install -y gcc
       
-    - name: Compile and Run Backend Tests
+    - name: Compile and run function tests
       run: |
         cd C/test
-        gcc -O2 -Wall test_vsearch_function.c ../vsearch_RPN_core.c ../utils.c -lm -o test_runner
-        ./test_runner
+        gcc -O2 -Wall test_vsearch_function.c ../vsearch_RPN_core.c ../utils.c -lm -o test_function_runner
+        ./test_function_runner
+
+    - name: Compile and run complex tests
+      run: |
+        cd C/test
+        gcc -O2 -Wall -DUSE_COMPLEX=1 test_vsearch_complex.c ../vsearch_RPN_core.c ../utils.c -lm -o test_complex_runner
+        ./test_complex_runner

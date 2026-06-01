@@ -22,7 +22,10 @@ vsearch_test: main_vsearch_test.c vsearch_RPN_core.c utils.c
 
 # WASM build (requires emcc)
 wasm: vsearch_RPN_wasm.c vsearch_RPN_core.c utils.c
-	emcc -O2 -Wall vsearch_RPN_wasm.c vsearch_RPN_core.c utils.c -s WASM=1 -s EXPORTED_FUNCTIONS='["_search_RPN","_search_RPN_with_cr","_search_RPN_hybrid","_vsearch_RPN","_free"]' -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' -o vsearch.js
+	emcc -O2 -Wall vsearch_RPN_wasm.c vsearch_RPN_core.c utils.c -s WASM=1 -s EXPORTED_FUNCTIONS='["_search_RPN","_search_RPN_with_cr","_search_RPN_hybrid","_search_RPN_custom","_search_function_wasm","_search_batch_wasm","_vsearch_RPN","_free","_malloc"]' -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' -o ../calculator_frontend/public/wasm/vsearch.js
+
+wasm-complex: vsearch_RPN_wasm.c vsearch_RPN_core.c utils.c
+	emcc -O2 -Wall -DUSE_COMPLEX=1 vsearch_RPN_wasm.c vsearch_RPN_core.c utils.c -s WASM=1 -s EXPORTED_FUNCTIONS='["_search_RPN","_search_RPN_with_cr","_search_RPN_hybrid","_search_RPN_custom","_search_function_wasm","_search_batch_wasm","_vsearch_RPN","_free","_malloc"]' -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' -o ../calculator_frontend/public/wasm/vsearch_complex.js
 
 # Legacy builds (math2.h is header-only, no .c file)
 DEPS = constant.c mathematica.c utils.c
@@ -48,11 +51,21 @@ ComplexConstantRecognition: $(OBJ_CPLX)
 casio_test: calc/CASIO_test.c vsearch_RPN_core.c utils.c
 	$(CC) $(CFLAGS) calc/CASIO_test.c vsearch_RPN_core.c utils.c -o casio_test $(LDFLAGS)
 
-.PHONY: clean all wasm legacy
+test_function: test/test_vsearch_function.c vsearch_RPN_core.c utils.c
+	$(CC) $(CFLAGS) test/test_vsearch_function.c vsearch_RPN_core.c utils.c -o test_func $(LDFLAGS)
+	./test_func
+
+test_complex: test/test_vsearch_complex.c vsearch_RPN_core.c utils.c
+	$(CC) $(CFLAGS) -DUSE_COMPLEX=1 test/test_vsearch_complex.c vsearch_RPN_core.c utils.c -o test_complex $(LDFLAGS)
+	./test_complex
+
+test: test_function test_complex
+
+.PHONY: clean all wasm wasm-complex legacy test test_function test_complex
 
 all: vsearch_batch vsearch_test
 
 clean:
 	rm -f $(OBJ_REAL) $(OBJ_CPLX) RealConstantRecognition ComplexConstantRecognition
-	rm -f vsearch_batch vsearch_test casio_test
+	rm -f vsearch_batch vsearch_test casio_test test_func test_complex
 	rm -f found.txt *.o

@@ -4,10 +4,10 @@
  * Date: January 2, 2025
  *
  * This file defines the standard CALC4 calculator:
- *   - 13 constants
+ *   - 13 real constants (14 in complex builds, where I is added)
  *   - 18 unary functions
  *   - 5 binary operators
- *   Total: 36 "buttons"
+ *   Total: 36 real "buttons" (37 in complex builds)
  *
  * Usage:
  *   #include "CALC4.h"
@@ -83,7 +83,7 @@
 #endif
 
 /* ============================================================================
- * CONSTANTS (13)
+ * CONSTANTS (13 real, 14 complex)
  * 
  * Mathematical constants and small integers frequently used in formulas.
  * Order matters for string-based lookup in WASM wrapper.
@@ -165,8 +165,8 @@ static const BinaryOp CALC4_OPS[] = {
 #define CALC4_N_TOTAL (CALC4_N_CONST + CALC4_N_UNARY + CALC4_N_BINARY)
 
 /* 
- * CALC4 should have exactly 36 buttons (13 + 18 + 5).
- * Verify at runtime with: assert(CALC4_N_TOTAL == 36);
+ * CALC4 has 36 real buttons (13 + 18 + 5). Complex builds add I, so
+ * CALC4_N_TOTAL is 37 when USE_COMPLEX is enabled.
  */
 
 #endif /* CALC4_H */

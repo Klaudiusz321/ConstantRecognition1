@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { SearchResult, Filters, Precision, ActiveWorker, defaultFilters, ErrorMode, ComputeMode, RecognitionTarget, Domain, CalculatorMode } from './lib/types';
-import { CalculatorId, DEFAULT_CALCULATOR_ID } from './lib/calculators';
-import { extractPrecision, evaluateRPN } from './lib/rpn';
+import { CalculatorId, DEFAULT_CALCULATOR_ID, getCalculatorById } from './lib/calculators';
+import { evaluateRPNDisplay } from './lib/rpn';
+import { formatComplexValue, parseSearchInput, resolveInputUncertainty } from './lib/input';
 import { useWebGPU } from './hooks/useWebGPU';
 import { Sidebar, InputBar, ResultCard, ResultsTable, EmptyState } from './components';
 
@@ -48,6 +49,7 @@ export default function CalculatorPage() {
   const [recognitionTarget, setRecognitionTarget] = useState<RecognitionTarget>('constant');
   const [domain, setDomain] = useState<Domain>('real');
   const [calculatorMode, setCalculatorMode] = useState<CalculatorMode>('standard');
+  const [inputError, setInputError] = useState<string | null>(null);
   
   const workersRef = useRef<Worker[]>([]);
   const isAbortedRef = useRef(false);
@@ -63,6 +65,15 @@ export default function CalculatorPage() {
     abort: abortGPU
   } = useWebGPU();
   const gpuName = gpuInfo?.name;
+  const selectedCalculator = useMemo(
+    () => getCalculatorById(selectedCalculatorId),
+    [selectedCalculatorId]
+  );
+  const calculatorSpec = useMemo(() => ({
+    consts: [...selectedCalculator.constantsCore, ...selectedCalculator.constantsRedundant],
+    funcs: [...selectedCalculator.unaryCore, ...selectedCalculator.unaryRedundant],
+    ops: [...selectedCalculator.operatorsCommutative, ...selectedCalculator.operatorsNoncommutative],
+  }), [selectedCalculator]);
   
   // Helper to calculate compression ratio
   const getCompressionRatio = (r: SearchResult): number => {
@@ -150,7 +161,7 @@ export default function CalculatorPage() {
         // Calculate numeric value from RPN
         let numericValue: string;
         try {
-          numericValue = evaluateRPN(r.RPN).toString();
+          numericValue = evaluateRPNDisplay(r.RPN, domain);
         } catch {
           numericValue = 'N/A';
         }
@@ -171,7 +182,7 @@ export default function CalculatorPage() {
       if (data.result && data.RPN) {
         let numericValue: string;
         try {
-          numericValue = evaluateRPN(data.RPN).toString();
+          numericValue = evaluateRPNDisplay(data.RPN, domain);
         } catch {
           numericValue = 'N/A';
         }
@@ -216,7 +227,32 @@ export default function CalculatorPage() {
   };
 
   const calculate = async () => {
-    if (!inputValue) return;
+    if (!inputValue.trim()) return;
+
+    setInputError(null);
+
+    const firstInputValue = inputValue.split(/[;,\n:]/)[0]?.trim() || inputValue.trim();
+    const targetInputForPrecision = recognitionTarget === 'constant' ? inputValue.trim() : firstInputValue;
+    let targetValue = { real: 0, imag: 0 };
+    let targetMagnitude = 1;
+    let zNum = 0;
+
+    try {
+      const parsed = parseSearchInput(targetInputForPrecision);
+      targetValue = { real: parsed.real, imag: parsed.imag };
+      targetMagnitude = Math.max(Math.hypot(parsed.real, parsed.imag), 1);
+      zNum = parsed.real;
+
+      if (recognitionTarget === 'constant' && domain === 'real' && Math.abs(parsed.imag) > 1e-12) {
+        setInputError('This target has an imaginary part. Switch Domain to Complex.');
+        return;
+      }
+    } catch (err) {
+      if (recognitionTarget === 'constant') {
+        setInputError(err instanceof Error ? err.message : 'Could not parse the target value.');
+        return;
+      }
+    }
     
     setIsCalculating(true);
     setResults([]);
@@ -232,24 +268,20 @@ export default function CalculatorPage() {
       setElapsedTime(Date.now() - startTimeRef.current);
     }, 500);
     
-    // Calculate precision based on error mode
-    let deltaZNum: number;
-    const zNum = parseFloat(inputValue);
-    
-    if (errorMode === 'zero') {
-      deltaZNum = 0;
-    } else if (errorMode === 'manual' && manualError) {
-      deltaZNum = parseFloat(manualError) || 0;
-    } else {
-      // automatic mode - use extractPrecision
-      const autoPrecision = extractPrecision(inputValue);
-      deltaZNum = parseFloat(autoPrecision.deltaZ || '0.5');
-    }
+    const deltaZNum = resolveInputUncertainty(
+      targetInputForPrecision,
+      errorMode,
+      manualError,
+      targetMagnitude
+    );
     
     // Update precision display
-    const relDeltaZ = zNum !== 0 ? deltaZNum / Math.abs(zNum) : 0;
+    const relDeltaZ = targetMagnitude !== 0 ? deltaZNum / targetMagnitude : 0;
+    const precisionTarget = recognitionTarget === 'constant'
+      ? formatComplexValue(targetValue)
+      : inputValue;
     setPrecision({
-      z: inputValue,
+      z: precisionTarget,
       deltaZ: deltaZNum === 0 ? '0' : deltaZNum.toExponential(2),
       relDeltaZ: relDeltaZ === 0 ? '0' : relDeltaZ.toExponential(2)
     });
@@ -258,9 +290,16 @@ export default function CalculatorPage() {
     setSortColumn(exactSearch ? 'REL_ERR' : 'CR');
     setSortDirection(exactSearch ? 'asc' : 'desc');
 
-    const shouldUseGpu =
-      (computeMode === 'gpu' && gpuAvailable) ||
-      (computeMode === 'auto' && gpuAvailable);
+    const gpuCompatible =
+      recognitionTarget === 'constant' &&
+      domain === 'real' &&
+      calculatorMode === 'standard';
+
+    const shouldUseGpu = gpuCompatible && gpuAvailable && (
+      computeMode === 'gpu' ||
+      computeMode === 'apple_silicon' ||
+      computeMode === 'auto'
+    );
 
     if (shouldUseGpu) {
       setActiveWorkers([]);
@@ -273,7 +312,7 @@ export default function CalculatorPage() {
         const mappedResults: SearchResult[] = gpuResults.map(result => {
           let numericValue: string;
           try {
-            numericValue = evaluateRPN(result.RPN).toString();
+            numericValue = evaluateRPNDisplay(result.RPN, 'real');
           } catch {
             numericValue = 'N/A';
           }
@@ -352,9 +391,11 @@ export default function CalculatorPage() {
         const workerParams = {
           initDelay: i * 5,
           z: zNum,
+          targetValue,
           inputValue: inputValue,
           recognitionTarget: recognitionTarget,
           calculatorMode: calculatorMode,
+          calculatorSpec,
           inputPrecision: deltaZNum,
           MinCodeLength: 1,
           MaxCodeLength: searchDepth,
@@ -409,6 +450,7 @@ export default function CalculatorPage() {
     setLastSearchExact(false);
     setSearchFinished(false);
     setElapsedTime(0);
+    setInputError(null);
   };
 
   const handleExampleClick = (value: string) => {
@@ -463,6 +505,9 @@ export default function CalculatorPage() {
           onCalculate={calculate}
           onReset={handleReset}
           onAbort={handleAbort}
+          recognitionTarget={recognitionTarget}
+          domain={domain}
+          inputError={inputError}
         />
 
         {/* Search Status */}

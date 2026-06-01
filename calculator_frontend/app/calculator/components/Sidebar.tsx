@@ -90,7 +90,13 @@ export function Sidebar({
 }: SidebarProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const selectedCalculator = getCalculatorById(selectedCalculatorId);
-  const gpuSearchActive = computeMode === 'gpu' || (computeMode === 'auto' && gpuAvailable);
+  const gpuSearchCompatible =
+    domain === 'real' &&
+    recognitionTarget === 'constant' &&
+    calculatorMode === 'standard';
+  const gpuSearchActive =
+    gpuSearchCompatible &&
+    (computeMode === 'gpu' || computeMode === 'apple_silicon' || (computeMode === 'auto' && gpuAvailable));
   const manualTolerance = parseFloat(manualError);
   const toleranceSearchActive =
     errorMode === 'automatic' ||
@@ -304,7 +310,7 @@ export function Sidebar({
               <button
                 type="button"
                 onClick={() => setComputeMode('gpu')}
-                disabled={isCalculating || !gpuAvailable}
+                disabled={isCalculating || !gpuAvailable || !gpuSearchCompatible}
                 className={`flex-1 px-3 py-2 text-xs font-medium border-t border-b transition-colors
                   ${computeMode === 'gpu' 
                     ? 'bg-[#0066cc] text-white border-[#0066cc]' 
@@ -316,7 +322,7 @@ export function Sidebar({
               <button
                 type="button"
                 onClick={() => setComputeMode('apple_silicon')}
-                disabled={isCalculating || !gpuAvailable}
+                disabled={isCalculating || !gpuAvailable || !gpuSearchCompatible}
                 className={`flex-1 px-2 py-2 text-xs font-medium rounded-r-md border transition-colors
                   ${computeMode === 'apple_silicon' 
                     ? 'bg-[#0066cc] text-white border-[#0066cc]' 
@@ -330,17 +336,22 @@ export function Sidebar({
             {/* Status text */}
             <div className="text-[10px] text-gray-400 dark:text-gray-500">
               {computeMode === 'auto' && (
-                gpuAvailable 
+                gpuAvailable && gpuSearchCompatible
                   ? <span className="text-green-600 dark:text-green-400">Will use GPU (WebGPU available)</span>
-                  : <span>Will use CPU (WebGPU not available)</span>
+                  : <span>Will use CPU/WASM</span>
               )}
               {computeMode === 'cpu' && (
                 <span>WASM Workers ({autoThreads ? detectedCPUs : threadCount} threads)</span>
               )}
               {computeMode === 'gpu' && (
-                gpuAvailable 
+                gpuAvailable && gpuSearchCompatible
                   ? <span className="text-green-600 dark:text-green-400">{gpuName || 'WebGPU'}</span>
                   : <span className="text-amber-600 dark:text-amber-400">⚠️ GPU unavailable, will use CPU</span>
+              )}
+              {computeMode === 'apple_silicon' && (
+                gpuAvailable && gpuSearchCompatible
+                  ? <span className="text-green-600 dark:text-green-400">Apple Silicon via browser WebGPU</span>
+                  : <span className="text-amber-600 dark:text-amber-400">Apple Silicon path unavailable for this search, will use CPU</span>
               )}
             </div>
           </div>
@@ -398,7 +409,7 @@ export function Sidebar({
           </div>
 
           {/* Threads - only visible when CPU will be used */}
-          {(computeMode === 'cpu' || (computeMode === 'auto' && !gpuAvailable)) && (
+          {!gpuSearchActive && (
             <div className="space-y-2">
               <label className="text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
                 CPU Threads

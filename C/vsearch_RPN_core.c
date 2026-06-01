@@ -298,9 +298,22 @@ static double compute_function_error(
     double error = 0.0, max_err = 0.0;
     int valid = 0;
     for (int i = 0; i < n_data; i++) {
-        double computed = evaluate_expression(ternary, indices, K, const_ops, n_const, unary_ops, binary_ops, MODE_FUNCTION, data[i].x);
+#ifdef USE_COMPLEX
+        calc_type computed = evaluate_expression(ternary, indices, K, const_ops, n_const, unary_ops, binary_ops, MODE_FUNCTION, data[i].x);
+        if (isnan(creal(computed)) || isnan(cimag(computed)) || isinf(creal(computed)) || isinf(cimag(computed))) { error += 1e10; valid++; continue; }
+        calc_type diff = computed - data[i].y;
+        double abs_diff = cabs(diff);
+        switch (metric) {
+            case ERROR_MSE: error += abs_diff * abs_diff; break;
+            case ERROR_MAE: case ERROR_ABS: error += abs_diff; break;
+            case ERROR_MAX: if (abs_diff > max_err) max_err = abs_diff; break;
+            case ERROR_REL: error += (cabs(data[i].y) == 0.0) ? abs_diff : cabs(computed/data[i].y - 1.0); break;
+            default: error += abs_diff;
+        }
+#else
+        calc_type computed = evaluate_expression(ternary, indices, K, const_ops, n_const, unary_ops, binary_ops, MODE_FUNCTION, data[i].x);
         if (isnan(computed) || isinf(computed)) { error += 1e10; valid++; continue; }
-        double diff = computed - data[i].y;
+        calc_type diff = computed - data[i].y;
         double abs_diff = fabs(diff);
         switch (metric) {
             case ERROR_MSE: error += diff * diff; break;
@@ -309,6 +322,7 @@ static double compute_function_error(
             case ERROR_REL: error += (data[i].y == 0.0) ? abs_diff : fabs(computed/data[i].y - 1.0); break;
             default: error += abs_diff;
         }
+#endif
         valid++;
     }
     if (valid == 0) return DBL_MAX;
@@ -322,7 +336,7 @@ static double compute_function_error(
 typedef struct {
     int found;
     double best_err;
-    double computed_value;
+    calc_type computed_value;
     int best_K;
     int best_indices[MAX_CODE_LENGTH];
     char best_ternary[MAX_CODE_LENGTH];
@@ -351,7 +365,7 @@ typedef struct {
     double cr_threshold;
     TargetState* targets;      /* Per-target state for CONSTANT/BATCH */
     double func_best_err;      /* Best error for FUNCTION mode */
-    double func_best_value;
+    calc_type func_best_value;
     int func_best_K;
     int func_best_indices[MAX_CODE_LENGTH];
     char func_best_ternary[MAX_CODE_LENGTH];
@@ -416,12 +430,16 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
         }
         
         /* MODE_CONSTANT or MODE_BATCH: evaluate once, check against each unfound target */
-        double computed = evaluate_expression(ternary, indices, K, st->const_ops, st->n_const, st->unary_ops, st->binary_ops, MODE_CONSTANT, 0.0);
+        calc_type computed = evaluate_expression(ternary, indices, K, st->const_ops, st->n_const, st->unary_ops, st->binary_ops, MODE_CONSTANT, 0.0);
+#ifdef USE_COMPLEX
+        if (isnan(creal(computed)) || isnan(cimag(computed)) || isinf(creal(computed)) || isinf(cimag(computed))) return 0;
+#else
         if (isnan(computed) || isinf(computed)) return 0;
+#endif
         
         for (int t = 0; t < st->n_data; t++) {
             if (st->targets[t].found) continue;
-            double target = st->data[t].y;
+            calc_type target = st->data[t].y;
             double delta = st->data[t].dy;
             double err = compute_single_error(computed, target, st->metric);
             int is_better = (st->compare == COMPARE_STRICT) ? (err < st->targets[t].best_err) : (err <= st->targets[t].best_err);
@@ -435,7 +453,11 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
                 /* Output INTERMEDIATE result */
                 char code[512];
                 format_code(ternary, indices, K, st->const_ops, st->unary_ops, st->binary_ops, MODE_CONSTANT, code, sizeof(code));
+#ifdef USE_COMPLEX
+                int hamming = compute_hamming_distance(creal(target), creal(computed));
+#else
                 int hamming = compute_hamming_distance(target, computed);
+#endif
                 
                 if (st->result_count > 0) {
                     int w = snprintf(st->json_ptr, st->json_remaining, ",\n");
@@ -466,7 +488,11 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
                 if (st->n_data > 1) {
                     char code[512];
                     format_code(ternary, indices, K, st->const_ops, st->unary_ops, st->binary_ops, MODE_CONSTANT, code, sizeof(code));
+#ifdef USE_COMPLEX
+                    int hamming = compute_hamming_distance(creal(target), creal(computed));
+#else
                     int hamming = compute_hamming_distance(target, computed);
+#endif
                     
                     if (st->result_count > 0) {
                         int w = snprintf(st->json_ptr, st->json_remaining, ",\n");
@@ -570,6 +596,21 @@ char* vsearch_core(
     const char* metric_str[] = {"ABS", "REL", "MSE", "MAE", "MAX", "ULP", "HAMMING"};
     const char* compare_str = (compare == COMPARE_STRICT) ? "STRICT" : "EQUAL";
     
+#ifdef USE_COMPLEX
+    int w = snprintf(st.json_ptr, st.json_remaining,
+        "{\n"
+        "\"buildTime\": \"%s\",\n"
+        "\"mode\": \"%s\",\n"
+        "\"metric\": \"%s\",\n"
+        "\"compare\": \"%s\",\n"
+        "\"n_data\": %d,\n"
+        "\"target\": %.17g,\n"
+        "\"target_imag\": %.17g,\n"
+        "\"delta\": %.17g,\n"
+        "\"candidates\": [\n",
+        BUILD_TIMESTAMP, mode_str, metric_str[metric], compare_str,
+        n_data, creal(data[0].y), cimag(data[0].y), data[0].dy);
+#else
     int w = snprintf(st.json_ptr, st.json_remaining,
         "{\n"
         "\"buildTime\": \"%s\",\n"
@@ -580,10 +621,6 @@ char* vsearch_core(
         "\"target\": %.17g,\n"
         "\"delta\": %.17g,\n"
         "\"candidates\": [\n",
-#ifdef USE_COMPLEX
-        BUILD_TIMESTAMP, mode_str, metric_str[metric], compare_str,
-        n_data, creal(data[0].y), data[0].dy);
-#else
         BUILD_TIMESTAMP, mode_str, metric_str[metric], compare_str,
         n_data, data[0].y, data[0].dy);
 #endif
@@ -618,7 +655,11 @@ char* vsearch_core(
                     char code[512];
                     format_code(targets[i].best_ternary, targets[i].best_indices, targets[i].best_K,
                                const_ops, unary_ops, binary_ops, MODE_CONSTANT, code, sizeof(code));
+#ifdef USE_COMPLEX
+                    int hamming = compute_hamming_distance(creal(data[i].y), creal(targets[i].computed_value));
+#else
                     int hamming = compute_hamming_distance(data[i].y, targets[i].computed_value);
+#endif
                     
                     if (st.result_count > 0) {
                         w = snprintf(st.json_ptr, st.json_remaining, ",\n");
@@ -673,7 +714,11 @@ char* vsearch_core(
                 if (n_data > 1) {  /* Only for batch mode */
                     char code[512];
                     format_code(targets[i].best_ternary, targets[i].best_indices, targets[i].best_K, const_ops, unary_ops, binary_ops, MODE_CONSTANT, code, sizeof(code));
+#ifdef USE_COMPLEX
+                    int hamming = compute_hamming_distance(creal(data[i].y), creal(targets[i].computed_value));
+#else
                     int hamming = compute_hamming_distance(data[i].y, targets[i].computed_value);
+#endif
                     
                     if (st.result_count > 0) {
                         w = snprintf(st.json_ptr, st.json_remaining, ",\n");
@@ -706,11 +751,23 @@ char* vsearch_core(
         char final_code[512];
         format_code(targets[0].best_ternary, targets[0].best_indices, targets[0].best_K,
                    const_ops, unary_ops, binary_ops, MODE_CONSTANT, final_code, sizeof(final_code));
-        int final_hamming = compute_hamming_distance(data[0].y, targets[0].computed_value);
+        int final_hamming =
+#ifdef USE_COMPLEX
+            compute_hamming_distance(creal(data[0].y), creal(targets[0].computed_value));
+#else
+            compute_hamming_distance(data[0].y, targets[0].computed_value);
+#endif
+        ;
         
         /* Compute compression ratio */
         double compression;
-        double target_val = creal(data[0].y);
+        double target_val =
+#ifdef USE_COMPLEX
+            cabs(data[0].y);
+#else
+            fabs(data[0].y);
+#endif
+        ;
         double delta_val = data[0].dy;
         if (target_val == 0.0) {
             compression = 0.0;

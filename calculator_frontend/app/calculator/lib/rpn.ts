@@ -1,4 +1,5 @@
 import { Precision } from './types';
+import { ComplexValue, extractInputPrecision, formatComplexValue } from './input';
 
 // RPN Interpreter and conversion functions
 
@@ -9,6 +10,7 @@ export const namedConstants: Record<string, string> = {
   "NINE": "9", "POL": "½", "PI": "π", "EULER": "e", "GOLDENRATIO": "φ",
   "EULER_GAMMA": "γ"  // Euler-Mascheroni constant (not in WASM yet)
 };
+namedConstants.I = "i";
 
 export const namedFunctions: Record<string, string> = {
   "EXP": "exp", "LOG": "ln", "INV": "inv", "MINUS": "minus",
@@ -193,30 +195,87 @@ export function evaluateRPN(rpn: string | string[]): number {
   return stack.pop() || NaN;
 }
 
+const complexConstants: Record<string, ComplexValue> = {
+  "NEG": { real: -1, imag: 0 }, "ZERO": { real: 0, imag: 0 },
+  "ONE": { real: 1, imag: 0 }, "TWO": { real: 2, imag: 0 },
+  "THREE": { real: 3, imag: 0 }, "FOUR": { real: 4, imag: 0 },
+  "FIVE": { real: 5, imag: 0 }, "SIX": { real: 6, imag: 0 },
+  "SEVEN": { real: 7, imag: 0 }, "EIGHT": { real: 8, imag: 0 },
+  "NINE": { real: 9, imag: 0 }, "POL": { real: 0.5, imag: 0 },
+  "PI": { real: Math.PI, imag: 0 }, "EULER": { real: Math.E, imag: 0 },
+  "GOLDENRATIO": { real: (1 + Math.sqrt(5)) / 2, imag: 0 },
+  "I": { real: 0, imag: 1 }
+};
+
+const cadd = (a: ComplexValue, b: ComplexValue): ComplexValue => ({ real: a.real + b.real, imag: a.imag + b.imag });
+const csub = (a: ComplexValue, b: ComplexValue): ComplexValue => ({ real: a.real - b.real, imag: a.imag - b.imag });
+const cmul = (a: ComplexValue, b: ComplexValue): ComplexValue => ({ real: a.real * b.real - a.imag * b.imag, imag: a.real * b.imag + a.imag * b.real });
+const cdiv = (a: ComplexValue, b: ComplexValue): ComplexValue => {
+  const denom = b.real * b.real + b.imag * b.imag;
+  return { real: (a.real * b.real + a.imag * b.imag) / denom, imag: (a.imag * b.real - a.real * b.imag) / denom };
+};
+const cexp = (z: ComplexValue): ComplexValue => {
+  const scale = Math.exp(z.real);
+  return { real: scale * Math.cos(z.imag), imag: scale * Math.sin(z.imag) };
+};
+const clog = (z: ComplexValue): ComplexValue => ({ real: Math.log(Math.hypot(z.real, z.imag)), imag: Math.atan2(z.imag, z.real) });
+const cpow = (a: ComplexValue, b: ComplexValue): ComplexValue => cexp(cmul(b, clog(a)));
+const csqrt = (z: ComplexValue): ComplexValue => {
+  const r = Math.hypot(z.real, z.imag);
+  return {
+    real: Math.sqrt((r + z.real) / 2),
+    imag: Math.sign(z.imag || 1) * Math.sqrt(Math.max(0, (r - z.real) / 2))
+  };
+};
+const csin = (z: ComplexValue): ComplexValue => ({ real: Math.sin(z.real) * Math.cosh(z.imag), imag: Math.cos(z.real) * Math.sinh(z.imag) });
+const ccos = (z: ComplexValue): ComplexValue => ({ real: Math.cos(z.real) * Math.cosh(z.imag), imag: -Math.sin(z.real) * Math.sinh(z.imag) });
+const ctan = (z: ComplexValue): ComplexValue => cdiv(csin(z), ccos(z));
+
+const complexFunctions: Record<string, (x: ComplexValue) => ComplexValue> = {
+  "EXP": cexp, "LOG": clog, "INV": x => cdiv({ real: 1, imag: 0 }, x),
+  "MINUS": x => ({ real: -x.real, imag: -x.imag }),
+  "SIN": csin, "COS": ccos, "TAN": ctan, "SQRT": csqrt,
+  "SQR": x => cmul(x, x),
+  "SINH": x => ({ real: Math.sinh(x.real) * Math.cos(x.imag), imag: Math.cosh(x.real) * Math.sin(x.imag) }),
+  "COSH": x => ({ real: Math.cosh(x.real) * Math.cos(x.imag), imag: Math.sinh(x.real) * Math.sin(x.imag) }),
+  "TANH": x => cdiv(
+    { real: Math.sinh(x.real) * Math.cos(x.imag), imag: Math.cosh(x.real) * Math.sin(x.imag) },
+    { real: Math.cosh(x.real) * Math.cos(x.imag), imag: Math.sinh(x.real) * Math.sin(x.imag) }
+  ),
+  "GAMMA": x => x.imag === 0 ? { real: gamma(x.real), imag: 0 } : { real: NaN, imag: NaN }
+};
+
+const complexOperators: Record<string, (a: ComplexValue, b: ComplexValue) => ComplexValue> = {
+  "PLUS": cadd, "SUBTRACT": csub, "TIMES": cmul, "DIVIDE": cdiv, "POWER": cpow
+};
+
+export function evaluateRPNComplex(rpn: string | string[]): ComplexValue {
+  const isShort = typeof rpn === 'string' && isShortFormRPN(rpn);
+  const tokens = typeof rpn === 'string' ? parseRPN(rpn) : rpn;
+  const stack: ComplexValue[] = [];
+  tokens.forEach(token => {
+    if (complexConstants[token] !== undefined) {
+      stack.push(complexConstants[token]);
+    } else if (complexFunctions[token]) {
+      const arg = stack.pop() || { real: 0, imag: 0 };
+      stack.push(complexFunctions[token](arg));
+    } else if (complexOperators[token]) {
+      const right = stack.pop() || { real: 0, imag: 0 };
+      const left = stack.pop() || { real: 0, imag: 0 };
+      stack.push(isShort ? complexOperators[token](left, right) : complexOperators[token](right, left));
+    }
+  });
+  return stack.pop() || { real: NaN, imag: NaN };
+}
+
+export function evaluateRPNDisplay(rpn: string | string[], domain: 'real' | 'complex' = 'real'): string {
+  if (domain === 'complex') return formatComplexValue(evaluateRPNComplex(rpn));
+  return evaluateRPN(rpn).toString();
+}
+
 // Extract precision info from input string
 export function extractPrecision(inputString: string): Precision {
-  const z = inputString;
-  const parts = inputString.split(/e/i);
-  const mainPart = parts[0];
-  const exponent = parts.length > 1 ? parseInt(parts[1]) : 0;
-  const decimalIndex = mainPart.indexOf('.');
-  
-  let deltaZ: number;
-  if (decimalIndex === -1) {
-    deltaZ = 0.5;
-  } else {
-    const fractionalPart = mainPart.slice(decimalIndex + 1);
-    deltaZ = 0.5 * Math.pow(10, -fractionalPart.length + exponent);
-  }
-  
-  const zNum = parseFloat(inputString);
-  const relDeltaZ = zNum !== 0 ? deltaZ / Math.abs(zNum) : 0;
-  
-  return {
-    z,
-    deltaZ: deltaZ.toExponential(2),
-    relDeltaZ: relDeltaZ.toExponential(2)
-  };
+  return extractInputPrecision(inputString);
 }
 
 // Convert RPN to Mathematica syntax
@@ -228,7 +287,7 @@ export function rpnToMathematica(rpn: string | string[]): string {
     "NEG": "(-1)", "ZERO": "0", "ONE": "1", "TWO": "2", "THREE": "3",
     "FOUR": "4", "FIVE": "5", "SIX": "6", "SEVEN": "7", "EIGHT": "8",
     "NINE": "9", "PI": "Pi", "EULER": "E", "GOLDENRATIO": "GoldenRatio",
-    "EULER_GAMMA": "EulerGamma", "POL": "(1/2)"
+    "I": "I", "EULER_GAMMA": "EulerGamma", "POL": "(1/2)"
   };
   const mmaFunctions: Record<string, string> = {
     "EXP": "Exp", "LOG": "Log", "SIN": "Sin", "ARCSIN": "ArcSin",
@@ -297,7 +356,7 @@ export function rpnToLatex(rpn: string | string[]): string {
     "NEG": "(-1)", "ZERO": "0", "ONE": "1", "TWO": "2", "THREE": "3",
     "FOUR": "4", "FIVE": "5", "SIX": "6", "SEVEN": "7", "EIGHT": "8",
     "NINE": "9", "PI": "\\pi", "EULER": "e", "GOLDENRATIO": "\\varphi",
-    "EULER_GAMMA": "\\gamma"
+    "I": "i", "EULER_GAMMA": "\\gamma"
   };
   
   const latexFunctions: Record<string, (x: string) => string> = {

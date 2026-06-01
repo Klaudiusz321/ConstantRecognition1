@@ -1,5 +1,7 @@
 'use client';
 
+import { Domain, RecognitionTarget } from '../lib/types';
+
 interface InputBarProps {
   inputValue: string;
   setInputValue: (value: string) => void;
@@ -7,6 +9,9 @@ interface InputBarProps {
   onCalculate: () => void;
   onReset: () => void;
   onAbort: () => void;
+  recognitionTarget: RecognitionTarget;
+  domain: Domain;
+  inputError: string | null;
 }
 
 export function InputBar({
@@ -15,21 +20,61 @@ export function InputBar({
   isCalculating,
   onCalculate,
   onReset,
-  onAbort
+  onAbort,
+  recognitionTarget,
+  domain,
+  inputError
 }: InputBarProps) {
+  const multiline = recognitionTarget === 'function' || recognitionTarget === 'sequence';
+  const placeholder = (() => {
+    if (recognitionTarget === 'function') return domain === 'complex' ? '0:1; i:0+1i; 1+i:2' : '0:1; 1:2; 2:5';
+    if (recognitionTarget === 'multiple') return domain === 'complex' ? 'pi, i, 1+i' : 'pi, e, 1.6180339887';
+    if (recognitionTarget === 'sequence') return '1, 1, 2, 3, 5, 8';
+    return domain === 'complex' ? 'Enter a value, e.g. i^i or 1+2i' : 'Enter a number, e.g. Pi or 3.14159265...';
+  })();
+
+  const appendImaginaryUnit = () => {
+    setInputValue(inputValue ? `${inputValue}i` : 'i');
+  };
+
   return (
     <div className="p-4 sm:p-6 bg-white dark:bg-[#1a1a1d] border-b border-gray-200 dark:border-[#2a2a2e]">
       <div className="max-w-4xl mx-auto">
         <div className="flex flex-col sm:flex-row gap-3 sm:gap-3">
           <div className="flex-1 relative">
-            <input
-              type="text"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              placeholder="Enter a number, e.g. 3.14159265..."
-              className="w-full px-4 py-3 rounded-lg bg-gray-50 dark:bg-[#111113] border border-gray-200 dark:border-[#2a2a2e] text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:border-[#0066cc] focus:outline-none focus:ring-1 focus:ring-[#0066cc] font-mono text-lg"
-              onKeyDown={(e) => e.key === 'Enter' && onCalculate()}
-            />
+            {multiline ? (
+              <textarea
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                placeholder={placeholder}
+                rows={3}
+                className="w-full resize-none px-4 py-3 pr-14 rounded-lg bg-gray-50 dark:bg-[#111113] border border-gray-200 dark:border-[#2a2a2e] text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:border-[#0066cc] focus:outline-none focus:ring-1 focus:ring-[#0066cc] font-mono text-base"
+              />
+            ) : (
+              <input
+                type="text"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                placeholder={placeholder}
+                className="w-full px-4 py-3 pr-14 rounded-lg bg-gray-50 dark:bg-[#111113] border border-gray-200 dark:border-[#2a2a2e] text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:border-[#0066cc] focus:outline-none focus:ring-1 focus:ring-[#0066cc] font-mono text-lg"
+                onKeyDown={(e) => e.key === 'Enter' && onCalculate()}
+              />
+            )}
+            {domain === 'complex' && (
+              <button
+                type="button"
+                onClick={appendImaginaryUnit}
+                disabled={isCalculating}
+                className="absolute right-2 top-2 rounded-md border border-gray-200 bg-white px-3 py-1.5 font-mono text-sm text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#2a2a2e] dark:bg-[#1a1a1d] dark:text-gray-200 dark:hover:bg-[#2a2a2e]"
+                title="Insert imaginary unit"
+                aria-label="Insert imaginary unit"
+              >
+                i
+              </button>
+            )}
+            {inputError && (
+              <div className="mt-2 text-sm text-red-600 dark:text-red-400">{inputError}</div>
+            )}
           </div>
           <div className="flex gap-2">
             <button
