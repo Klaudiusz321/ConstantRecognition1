@@ -1,9 +1,17 @@
 'use client';
 
 import { useState } from 'react';
+import Image from 'next/image';
 import { ActiveWorker, Precision, ErrorMode, ComputeMode, RecognitionTarget, Domain, CalculatorMode } from '../lib/types';
 import { CALCULATORS, CalculatorId, getCalculatorById } from '../lib/calculators';
 import { CalculatorPalette } from './CalculatorPalette';
+
+const withBasePath = (path: string) => {
+  const base = process.env.NEXT_PUBLIC_BASE_PATH?.replace(/\/+$/g, '') ?? '';
+  const normalizedBase = base ? (base.startsWith('/') ? base : `/${base}`) : '';
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${normalizedBase}${normalizedPath}`;
+};
 
 interface SidebarProps {
   wasmLoaded: boolean;
@@ -92,7 +100,7 @@ export function Sidebar({
     ? 'Ignored for GPU/WebGPU search. The current GPU engine searches all K values.'
     : toleranceSearchActive
       ? 'Applies to CPU/WASM tolerance-based search.'
-      : 'Ignored for exact search (± 0). Use Auto or Manual uncertainty to enable it.';
+      : 'Ignored for exact search (+/- 0). Use Auto or Manual uncertainty to enable it.';
 
   return (
     <>
@@ -135,9 +143,11 @@ export function Sidebar({
         <div className="p-4 border-b border-gray-200 dark:border-[#2a2a2e]">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <img 
-                src="/cdaaebfdc71641160f831c2a2fb564ce8d081055.png" 
+              <Image
+                src={withBasePath('/cdaaebfdc71641160f831c2a2fb564ce8d081055.png')}
                 alt="Logo" 
+                width={40}
+                height={40}
                 className="w-10 h-10 rounded-lg object-cover"
               />
               <div>

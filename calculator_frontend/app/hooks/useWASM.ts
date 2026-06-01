@@ -1,26 +1,41 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { createMockWASM } from '../lib/mockWASM';
 
-// Toggle between real WASM and mock
-const USE_MOCK_WASM = true; // Zmień na false gdy będziesz miał prawdziwy WASM
+const USE_MOCK_WASM = true;
+
+type WASMArgument = string | number | boolean | null;
 
 interface WASMModule {
   ccall: (
     name: string,
     returnType: string,
     argTypes: string[],
-    args: any[]
-  ) => any;
+    args: WASMArgument[]
+  ) => string;
+  onRuntimeInitialized?: () => void;
+}
+
+declare global {
+  interface Window {
+    Module?: WASMModule;
+  }
 }
 
 interface SearchResult {
   RPN: string;
   Mathematica: string;
   Error: number;
-  results?: any[];
+  results?: unknown[];
 }
+
+const withBasePath = (path: string) => {
+  const base = process.env.NEXT_PUBLIC_BASE_PATH?.replace(/\/+$/g, '') ?? '';
+  const normalizedBase = base ? (base.startsWith('/') ? base : `/${base}`) : '';
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${normalizedBase}${normalizedPath}`;
+};
 
 export function useWASM() {
   const [Module, setModule] = useState<WASMModule | null>(null);
@@ -30,35 +45,31 @@ export function useWASM() {
 
   useEffect(() => {
     let mounted = true;
+    let script: HTMLScriptElement | null = null;
 
     const loadWASM = async () => {
       try {
         if (USE_MOCK_WASM) {
-          // Use mock WASM for development
           const mockModule = await createMockWASM();
           if (mounted) {
-            setModule(mockModule as any);
+            setModule(mockModule);
             setIsReady(true);
-            console.log('✅ Mock WASM module loaded successfully');
+            console.log('[WASM] Mock module loaded successfully');
           }
           return;
         }
 
-        // Real WASM loading (requires compiled files)
-        const script = document.createElement('script');
-        script.src = '/wasm/rpn_function.js';
+        script = document.createElement('script');
+        script.src = withBasePath('/wasm/rpn_function.js');
         script.async = true;
 
         script.onload = () => {
-          // @ts-ignore - WASM module is loaded globally
           if (window.Module) {
-            // @ts-ignore
             window.Module.onRuntimeInitialized = () => {
-              if (mounted) {
-                // @ts-ignore
+              if (mounted && window.Module) {
                 setModule(window.Module);
                 setIsReady(true);
-                console.log('✅ WASM module loaded successfully');
+                console.log('[WASM] Module loaded successfully');
               }
             };
           }
@@ -67,25 +78,27 @@ export function useWASM() {
         script.onerror = () => {
           if (mounted) {
             setError('Failed to load WASM module');
-            console.error('❌ Failed to load WASM module');
+            console.error('[WASM] Failed to load module');
           }
         };
 
         document.body.appendChild(script);
-
-        return () => {
-          mounted = false;
-          document.body.removeChild(script);
-        };
       } catch (err) {
         if (mounted) {
           setError('Error initializing WASM');
-          console.error('❌ WASM initialization error:', err);
+          console.error('[WASM] Initialization error:', err);
         }
       }
     };
 
     loadWASM();
+
+    return () => {
+      mounted = false;
+      if (script?.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+    };
   }, []);
 
   const searchRPN = async (
@@ -97,7 +110,7 @@ export function useWASM() {
     ncpus: number = 1
   ): Promise<SearchResult | null> => {
     if (!Module || !isReady) {
-      console.warn('⚠️ WASM module not ready');
+      console.warn('[WASM] Module not ready');
       return null;
     }
 
@@ -113,12 +126,12 @@ export function useWASM() {
       );
 
       const result = JSON.parse(resultString) as SearchResult;
-      console.log('🔢 Calculation result:', result);
+      console.log('[WASM] Calculation result:', result);
       return result;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Calculation failed';
       setError(errorMsg);
-      console.error('❌ Calculation error:', err);
+      console.error('[WASM] Calculation error:', err);
       return null;
     } finally {
       setIsLoading(false);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import katex from 'katex';
 
 interface LatexProps {
@@ -9,25 +9,18 @@ interface LatexProps {
 }
 
 export function Latex({ formula, className = '' }: LatexProps) {
-  const [html, setHtml] = useState<string>('');
-
-  useEffect(() => {
+  const html = useMemo(() => {
     try {
-      const rendered = katex.renderToString(formula, {
+      return katex.renderToString(formula, {
         throwOnError: false,
         displayMode: false,
         trust: true,
         strict: false,
       });
-      setHtml(rendered);
     } catch {
-      setHtml(formula);
+      return formula;
     }
   }, [formula]);
-
-  if (!html) {
-    return <span className={className}>{formula}</span>;
-  }
 
   return (
     <span 

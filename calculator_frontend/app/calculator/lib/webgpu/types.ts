@@ -42,15 +42,18 @@ declare global {
     message: string;
     reason: 'destroyed' | 'unknown';
   }
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   interface GPUShaderModule {}
   interface GPUComputePipelineDescriptor {
     layout: 'auto' | GPUPipelineLayout;
     compute: { module: GPUShaderModule; entryPoint: string };
   }
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   interface GPUPipelineLayout {}
   interface GPUComputePipeline {
     getBindGroupLayout(index: number): GPUBindGroupLayout;
   }
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   interface GPUBindGroupLayout {}
   interface GPUBufferDescriptor {
     size: number;
@@ -71,6 +74,7 @@ declare global {
     binding: number;
     resource: { buffer: GPUBuffer };
   }
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   interface GPUBindGroup {}
   interface GPUQueue {
     writeBuffer(buffer: GPUBuffer, offset: number, data: ArrayBuffer | ArrayBufferView): void;
@@ -87,6 +91,7 @@ declare global {
     dispatchWorkgroups(x: number, y?: number, z?: number): void;
     end(): void;
   }
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   interface GPUCommandBuffer {}
 }
 

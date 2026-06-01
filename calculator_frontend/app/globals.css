@@ -1,8 +1,9 @@
 @import "tailwindcss";
 @source "../";
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fafaf9;
+  --foreground: #0f172a;
 }
 
 @theme inline {
@@ -12,32 +13,36 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans);
-  overflow-x: hidden;
+* {
+  box-sizing: border-box;
 }
 
 html {
   overflow-x: hidden;
+  scroll-behavior: smooth;
 }
 
-/* Hide Next.js dev indicators that cause layout issues */
+body {
+  margin: 0;
+  overflow-x: hidden;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+::selection {
+  background: #99f6e4;
+  color: #0f172a;
+}
+
+/* Hide Next.js dev indicators that can cover the calculator viewport. */
 [data-nextjs-dialog-overlay],
 [data-nextjs-toast],
 nextjs-portal {
   display: none !important;
 }
 
-/* Prevent KaTeX from expanding page width */
+/* Prevent KaTeX output from expanding page width. */
 .katex {
   max-width: 100%;
   overflow-x: auto;

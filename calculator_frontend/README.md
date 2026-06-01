@@ -1,41 +1,68 @@
-# Calculator Frontend
+# Constant Recognition Frontend
 
-This is a Next.js 16 frontend for the constant recognizer. The project is configured for **static export**, so running `npm run build` emits a fully static site in the `out/` directory that can be served by any plain HTTP server (no Node.js runtime needed at deploy time).
+Next.js frontend for the Constant Recognition inverse symbolic calculator.
+
+The site has two layers:
+
+- Marketing and documentation routes: `/`, `/examples`, `/compare`, `/docs`, `/blog`
+- Fullscreen calculator application: `/calculator`
+
+The calculator runs locally in the browser through WebAssembly workers, with an experimental WebGPU backend when supported by the browser and hardware.
 
 ## Development
-- Install dependencies: `npm install`
-- Start the dev server: `npm run dev`
 
-## Static production build
-- Build the site: `npm run build`
-  - The static files are written to `out/`
-- Serve locally for a quick check (example): `npx serve@latest out`
-- Deploy by copying the `out/` directory to any HTTP server (e.g., `nginx`, `httpd`, `python -m http.server`).
-
-### Hosting in a subdirectory or behind a reverse proxy path
-If the site will be served from a non-root path (for example `https://example.com/constant/`), build with the base
-path baked in so all assets resolve correctly:
-
-```
-NEXT_PUBLIC_BASE_PATH=/constant npm run build
+```powershell
+npm install
+npm run dev
 ```
 
-This sets both the Next.js `basePath` and the URLs used to load the WASM worker so the static files under `out/`
-remain portable.
+## Production build
 
-**Example for FreeBSD server**
+```powershell
+npm run build
+```
 
-Target URL: `http://th.if.uj.edu.pl/~odrzywolek/WASM/calculator/`
+The project uses `output: "export"`, so the production site is emitted to `out/` and can be served by any static HTTP server. Serve it from a web root or configure `NEXT_PUBLIC_BASE_PATH` for subdirectory hosting.
 
-1. In PowerShell, set the base path (note: use the path portion, not the full URL):
-   ```powershell
-   $env:NEXT_PUBLIC_BASE_PATH = "/~odrzywolek/WASM/calculator"
-   npm run build
-   ```
-2. Copy the generated `out/` directory to `http://th.if.uj.edu.pl/~odrzywolek/WASM/calculator/` on the server (so
-   `out/index.html` ends up at `.../calculator/index.html`, `out/wasm/worker.js` at `.../calculator/wasm/worker.js`,
-   etc.).
-3. Serve the contents of `out/` with any HTTP server (Apache `httpd`, `nginx`, etc.) — no Node.js runtime is needed
-   on the server because everything is static.
+## SEO and public URLs
 
-If you prefer to run the Next.js server instead of exporting static files, omit `output: "export"` in `next.config.ts` and use `npm run start` after `npm run build`.
+Set `NEXT_PUBLIC_SITE_URL` to the canonical public URL before building:
+
+```powershell
+$env:NEXT_PUBLIC_SITE_URL = "https://example.org/constant-recognition"
+npm run build
+```
+
+Generated SEO routes include:
+
+- `/robots.txt`
+- `/sitemap.xml`
+- `/manifest.webmanifest`
+- Open Graph and Twitter preview images in `public/`
+- favicon, 192px icon, 512px icon, and Apple touch icon
+
+## Hosting in a subdirectory
+
+If the exported site is hosted under a path such as `https://example.org/~user/WASM/calculator/`, set both the canonical site URL and the Next.js base path:
+
+```powershell
+$env:NEXT_PUBLIC_SITE_URL = "https://example.org/~user/WASM/calculator"
+$env:NEXT_PUBLIC_BASE_PATH = "/~user/WASM/calculator"
+npm run build
+```
+
+Copy the contents of `out/` to the target directory. No Node.js runtime is required on the production server.
+
+## Netlify
+
+`../netlify.toml` is configured for static export:
+
+- build base: `calculator_frontend`
+- command: `npm run build`
+- publish directory: `out`
+
+Configure the real production `NEXT_PUBLIC_SITE_URL` in Netlify project settings before indexing the site.
+
+## Citation
+
+If the tool supports a publication or lecture material, cite the repository and include the target value, precision assumption, backend, search depth, and candidate expression used in the result.

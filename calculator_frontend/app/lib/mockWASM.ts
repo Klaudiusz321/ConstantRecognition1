@@ -1,29 +1,29 @@
-// Mock WASM module for development
+type WASMArgument = string | number | boolean | null;
+
 export const mockWASMModule = {
-  ccall: (name: string, returnType: string, argTypes: string[], args: any[]) => {
-    console.log('🔧 Mock WASM call:', { name, args });
-    
+  ccall: (name: string, _returnType: string, _argTypes: string[], args: WASMArgument[]) => {
+    console.log('[WASM] Mock call:', { name, args });
+
     if (name === 'search_RPN') {
-      const [z, deltaZ, minLength, maxLength, cpuId, ncpus] = args;
-      
-      // Symuluj wynik
+      const cpuId = Number(args[4] ?? 0);
+
       return JSON.stringify({
         RPN: 'PI, TWO, SQRT, PLUS',
         Mathematica: '(Pi + Sqrt[2])',
         Error: 1.23e-10,
-        cpuId: cpuId,
+        cpuId,
         results: [],
       });
     }
-    
+
     return '{}';
   },
 };
 
 export function createMockWASM() {
-  return new Promise((resolve) => {
+  return new Promise<typeof mockWASMModule>((resolve) => {
     setTimeout(() => {
       resolve(mockWASMModule);
-    }, 500); // Symuluj ładowanie
+    }, 500);
   });
 }

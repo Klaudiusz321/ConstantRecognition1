@@ -1,49 +1,90 @@
-import Link from 'next/link';
+import Image from "next/image";
+import Link from "next/link";
 
 export default function Footer() {
   return (
-    <footer className="bg-[#0a0a0b] border-t border-slate-800 py-12 px-6">
-      <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+    <footer className="border-t border-slate-200 bg-white px-4 py-12 sm:px-6 lg:px-8">
+      <div className="mx-auto grid max-w-7xl gap-10 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
         <div>
-          <h3 className="text-white font-bold mb-4">ConstantRecognition</h3>
-          <p className="text-slate-500 text-sm">
-            An open-source, web-based inverse symbolic calculator and closed form finder using WASM and GPU acceleration.
+          <div className="mb-4 flex items-center gap-3">
+            <Image src="/favicon-192.png" alt="" width={36} height={36} />
+            <h3 className="text-base font-semibold text-slate-950">
+              Constant Recognition
+            </h3>
+          </div>
+          <p className="max-w-sm text-sm leading-6 text-slate-600">
+            An academic inverse symbolic calculator for recovering candidate
+            closed forms from numerical values. The calculator runs locally in
+            the browser with WebAssembly and experimental WebGPU support.
           </p>
         </div>
+
         <div>
-          <h4 className="text-white font-semibold mb-4">Features</h4>
-          <ul className="text-slate-500 text-sm space-y-2">
-            <li><Link href="/calculator" className="hover:text-white transition-colors">Launch App</Link></li>
-            <li><Link href="/examples" className="hover:text-white transition-colors">Find formula from decimal</Link></li>
-            <li><Link href="/docs" className="hover:text-white transition-colors">Documentation</Link></li>
-          </ul>
-        </div>
-        <div>
-          <h4 className="text-white font-semibold mb-4">Resources</h4>
-          <ul className="text-slate-500 text-sm space-y-2">
-            <li><Link href="/compare" className="hover:text-white transition-colors">RIES / PSLQ alternative</Link></li>
-            <li><Link href="/blog" className="hover:text-white transition-colors">Blog</Link></li>
+          <h4 className="mb-4 text-sm font-semibold text-slate-950">Project</h4>
+          <ul className="space-y-3 text-sm text-slate-600">
             <li>
-              <a 
-                href="https://github.com/Klaudiusz321/ConstantRecognition" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="hover:text-white transition-colors"
-              >
-                GitHub Repository
-              </a>
+              <Link className="hover:text-slate-950" href="/calculator">
+                Calculator app
+              </Link>
+            </li>
+            <li>
+              <Link className="hover:text-slate-950" href="/examples">
+                Worked examples
+              </Link>
+            </li>
+            <li>
+              <Link className="hover:text-slate-950" href="/compare">
+                Method comparison
+              </Link>
             </li>
           </ul>
         </div>
+
         <div>
-          <h4 className="text-white font-semibold mb-4">About</h4>
-          <p className="text-slate-500 text-sm">
-            Created by Andrzej Odrzywołek &amp; Klaudiusz Sroka, UJ {new Date().getFullYear()}.
-          </p>
+          <h4 className="mb-4 text-sm font-semibold text-slate-950">
+            Documentation
+          </h4>
+          <ul className="space-y-3 text-sm text-slate-600">
+            <li>
+              <Link className="hover:text-slate-950" href="/docs#workflow">
+                Search workflow
+              </Link>
+            </li>
+            <li>
+              <Link className="hover:text-slate-950" href="/docs#accuracy">
+                Accuracy model
+              </Link>
+            </li>
+            <li>
+              <Link className="hover:text-slate-950" href="/docs#citation">
+                Citation
+              </Link>
+            </li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 className="mb-4 text-sm font-semibold text-slate-950">Source</h4>
+          <ul className="space-y-3 text-sm text-slate-600">
+            <li>
+              <a
+                className="hover:text-slate-950"
+                href="https://github.com/Klaudiusz321/ConstantRecognition1"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                GitHub repository
+              </a>
+            </li>
+            <li>Andrzej Odrzywolek and Klaudiusz Sroka</li>
+            <li>Jagiellonian University</li>
+          </ul>
         </div>
       </div>
-      <div className="max-w-7xl mx-auto text-center text-slate-600 text-xs border-t border-slate-800/50 pt-8 mt-8">
-        <p>A fast online alternative to Wolfram Alpha constant recognition, SymPy nsimplify, and Maple identify.</p>
+
+      <div className="mx-auto mt-10 max-w-7xl border-t border-slate-200 pt-6 text-xs text-slate-500">
+        Built for reproducible numerical exploration, local execution, and
+        transparent comparison with established constant-recognition tools.
       </div>
     </footer>
   );

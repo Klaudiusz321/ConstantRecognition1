@@ -73,7 +73,7 @@ const parseComplex = (str) => {
     str = str.replace(/\s/g, '').toLowerCase();
     let r = 0, i = 0;
     if (str.endsWith('i')) {
-        let core = str.slice(0, -1);
+        const core = str.slice(0, -1);
         if (core === '' || core === '+') { r = 0; i = 1; }
         else if (core === '-') { r = 0; i = -1; }
         else {
@@ -85,7 +85,7 @@ const parseComplex = (str) => {
                 }
             }
             if (splitIdx !== -1) {
-                let rStr = core.slice(0, splitIdx);
+                const rStr = core.slice(0, splitIdx);
                 let iStr = core.slice(splitIdx);
                 r = parseFloat(rStr);
                 if (iStr === '+' || iStr === '-') iStr += '1';

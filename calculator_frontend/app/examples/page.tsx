@@ -1,56 +1,127 @@
-import Link from 'next/link';
+import type { Metadata } from "next";
+import Link from "next/link";
 
-export const metadata = {
-  title: "Examples | Recognize Mathematical Constants",
-  description: "See how to find formula from decimal numbers with examples of known constants recognized by our inverse symbolic calculator.",
+export const metadata: Metadata = {
+  title: "Worked Examples",
+  description:
+    "Worked examples for recognizing constants from decimal values with Constant Recognition.",
+  alternates: {
+    canonical: "/examples",
+  },
 };
 
+const examples = [
+  {
+    name: "Pi",
+    value: "3.141592653589793",
+    formula: "pi",
+    note: "A baseline check for recognizing a fundamental constant directly.",
+  },
+  {
+    name: "Euler number",
+    value: "2.718281828459045",
+    formula: "e",
+    note: "Useful for confirming that the selected calculator mode includes exponential constants.",
+  },
+  {
+    name: "Golden ratio",
+    value: "1.618033988749895",
+    formula: "(1 + sqrt(5)) / 2",
+    note: "A compact algebraic expression that should rank strongly at low K.",
+  },
+  {
+    name: "Apery's constant",
+    value: "1.202056903159594",
+    formula: "zeta(3)",
+    note: "A good example of a named constant whose recognition depends on the enabled operations.",
+  },
+  {
+    name: "Gaussian integral half-value",
+    value: "0.886226925452758",
+    formula: "sqrt(pi) / 2",
+    note: "Shows how a value produced by an integral can reduce to a simple expression.",
+  },
+  {
+    name: "Catalan constant",
+    value: "0.915965594177219",
+    formula: "G",
+    note: "A useful test for distinguishing named constants from nearby numerical coincidences.",
+  },
+];
+
 export default function ExamplesPage() {
-  const examples = [
-    { name: "Pi (π)", value: "3.14159265359", formula: "π", description: "The ratio of a circle's circumference to its diameter." },
-    { name: "Euler's Number (e)", value: "2.71828182846", formula: "e", description: "The base of the natural logarithm." },
-    { name: "Golden Ratio (φ)", value: "1.61803398875", formula: "(1+√5)/2", description: "A famous irrational number found in nature and art." },
-    { name: "Catalan's Constant", value: "0.91596559417", formula: "G", description: "Occurs in estimates of combinatorial objects and integrals." },
-    { name: "Apéry's Constant", value: "1.20205690315", formula: "ζ(3)", description: "The sum of the reciprocals of the positive cubes." },
-    { name: "Gaussian Integral", value: "0.88622692545", formula: "√π/2", description: "The integral of e^(-x^2) from 0 to infinity." },
-  ];
-
   return (
-    <div className="max-w-4xl mx-auto px-6 py-20 text-slate-300">
-      <h1 className="text-4xl font-bold text-white mb-6">Find Formula From Decimal Number - Examples</h1>
-      <p className="text-lg mb-12">
-        See how our <strong>closed form finder</strong> can easily identify numerical constants. Try copying any of these floating-point values into the calculator to verify the results.
-      </p>
+    <div className="bg-stone-50 text-slate-950">
+      <section className="border-b border-slate-200 bg-white px-4 py-16 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-5xl">
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-teal-700">
+            Examples
+          </p>
+          <h1 className="mt-3 max-w-4xl text-4xl font-semibold tracking-normal sm:text-5xl">
+            Start with known constants, then test your own data.
+          </h1>
+          <p className="mt-6 max-w-3xl text-lg leading-8 text-slate-600">
+            These values are intentionally familiar. They help calibrate search
+            depth, precision assumptions, and enabled operations before running
+            the calculator on research data or unexplained simulation output.
+          </p>
+        </div>
+      </section>
 
-      <div className="grid md:grid-cols-2 gap-6">
-        {examples.map((ex, i) => (
-          <div key={i} className="bg-[#1a1a1c] border border-slate-800 p-6 rounded-xl hover:border-slate-600 transition-colors">
-            <h2 className="text-xl font-bold text-white mb-2">{ex.name}</h2>
-            <p className="text-slate-400 text-sm mb-4">{ex.description}</p>
-            <div className="bg-black/50 p-3 rounded font-mono text-sm mb-4 overflow-x-auto text-slate-300">
-              {ex.value}
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-blue-400 font-bold">{ex.formula}</span>
-              <Link href="/calculator">
-                <button className="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded text-white transition-colors">
-                  Try it
-                </button>
-              </Link>
-            </div>
+      <section className="px-4 py-16 sm:px-6 lg:px-8">
+        <div className="mx-auto grid max-w-6xl gap-5 md:grid-cols-2">
+          {examples.map((example) => (
+            <article
+              key={example.name}
+              className="rounded-lg border border-slate-200 bg-white p-6"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-950">
+                    {example.name}
+                  </h2>
+                  <p className="mt-2 leading-7 text-slate-600">
+                    {example.note}
+                  </p>
+                </div>
+                <span className="rounded-md bg-teal-50 px-3 py-1 font-mono text-sm text-teal-800">
+                  {example.formula}
+                </span>
+              </div>
+
+              <div className="mt-6 grid gap-3 font-mono text-sm">
+                <div className="rounded-md border border-slate-200 bg-stone-50 p-3 text-slate-700">
+                  target = {example.value}
+                </div>
+                <div className="rounded-md border border-slate-200 bg-white p-3 text-slate-700">
+                  candidate = {example.formula}
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="border-t border-slate-200 bg-white px-4 py-16 sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-5xl flex-col gap-6 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-2xl font-semibold text-slate-950">
+              Ready to run a value from your own work?
+            </h2>
+            <p className="mt-2 max-w-2xl text-slate-600">
+              Enter the decimal value in the calculator and start with a
+              conservative K limit. Increase the search only after inspecting
+              the early candidates.
+            </p>
           </div>
-        ))}
-      </div>
-
-      <div className="mt-16 bg-blue-900/20 border border-blue-800 p-8 rounded-xl text-center">
-        <h2 className="text-2xl font-bold text-white mb-4">Have your own numerical value?</h2>
-        <p className="mb-6">Use our PSLQ calculator alternative to recognize the mathematical constant.</p>
-        <Link href="/calculator">
-          <button className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-lg font-semibold transition-colors">
-            Launch Inverse Symbolic Calculator
-          </button>
-        </Link>
-      </div>
+          <Link
+            href="/calculator"
+            className="inline-flex h-11 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition-colors hover:bg-teal-800"
+          >
+            Open calculator
+          </Link>
+        </div>
+      </section>
     </div>
   );
 }

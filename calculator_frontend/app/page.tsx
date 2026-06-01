@@ -1,331 +1,269 @@
-'use client';
+import Image from "next/image";
+import Link from "next/link";
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import Link from 'next/link';
-
-// Mathematical particle for floating animation
-interface Particle {
-  id: number;
-  x: number;
-  y: number;
-  size: number;
-  symbol: string;
-  speed: number;
-  opacity: number;
-  rotation: number;
-  rotationSpeed: number;
-}
-
-interface FloatingEquation {
-  id: number;
-  x: number;
-  y: number;
-  equation: string;
-  speed: number;
-  opacity: number;
-}
-
-const mathSymbols = [
-  'π', 'e', 'φ', '∞', '∫', '∑', '∏', '√', '∂', '∇',
-  'Γ', 'ζ', 'sin', 'cos', 'tan', 'ln', 'log', 'exp',
-  '+', '−', '×', '÷', '=', '^', '(', ')'
+const metrics = [
+  { label: "Execution", value: "local WASM" },
+  { label: "Search model", value: "RPN expressions" },
+  { label: "Acceleration", value: "CPU / WebGPU" },
+  { label: "Data policy", value: "no server upload" },
 ];
 
-const equations = [
-  'e^(iπ) + 1 = 0',
-  'Γ(n) = (n-1)!',
-  'φ = (1+√5)/2',
-  'ζ(2) = π²/6',
-  'e = lim(1+1/n)^n',
-  '∫e^x dx = e^x'
+const useCases = [
+  {
+    title: "Recognize constants in research output",
+    text: "Turn numerical values from simulations, integrals, and symbolic experiments into candidate analytic expressions.",
+  },
+  {
+    title: "Investigate unexplained constants",
+    text: "Check whether a decimal resembles a known constant, a short expression, or a composition of elementary functions.",
+  },
+  {
+    title: "Run reproducible local searches",
+    text: "Keep computation in the browser so examples can be shared, inspected, and repeated without a hosted solver backend.",
+  },
 ];
+
+const workflow = [
+  "Enter a decimal value with the precision you trust.",
+  "Choose the search depth, domain, and allowed calculator mode.",
+  "Run the WASM or WebGPU backend locally.",
+  "Compare candidates by relative error and compression ratio.",
+];
+
+const structuredData = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "Constant Recognition",
+  applicationCategory: "ScientificApplication",
+  operatingSystem: "Web",
+  description:
+    "Browser-based inverse symbolic calculator for recognizing numerical constants and finding candidate closed forms from decimal values.",
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD",
+  },
+  creator: [
+    {
+      "@type": "Person",
+      name: "Andrzej Odrzywolek",
+      affiliation: "Jagiellonian University",
+    },
+    {
+      "@type": "Person",
+      name: "Klaudiusz Sroka",
+      affiliation: "Jagiellonian University",
+    },
+  ],
+};
 
 export default function LandingPage() {
-  const [particles, setParticles] = useState<Particle[]>([]);
-  const [floatingEqs, setFloatingEqs] = useState<FloatingEquation[]>([]);
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-  const [isLoaded, setIsLoaded] = useState(false);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animationRef = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    const newParticles: Particle[] = [];
-    for (let i = 0; i < 40; i++) {
-      newParticles.push({
-        id: i,
-        x: Math.random() * 100,
-        y: Math.random() * 100,
-        size: Math.random() * 24 + 14,
-        symbol: mathSymbols[Math.floor(Math.random() * mathSymbols.length)],
-        speed: Math.random() * 0.15 + 0.03,
-        opacity: Math.random() * 0.12 + 0.03,
-        rotation: Math.random() * 360,
-        rotationSpeed: (Math.random() - 0.5) * 0.5
-      });
-    }
-    setParticles(newParticles);
-
-    const newEqs: FloatingEquation[] = [];
-    for (let i = 0; i < 6; i++) {
-      newEqs.push({
-        id: i,
-        x: Math.random() * 80 + 10,
-        y: Math.random() * 100,
-        equation: equations[Math.floor(Math.random() * equations.length)],
-        speed: Math.random() * 0.08 + 0.02,
-        opacity: Math.random() * 0.08 + 0.02
-      });
-    }
-    setFloatingEqs(newEqs);
-    setIsLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setParticles(prev => prev.map(p => ({
-        ...p,
-        y: p.y - p.speed < -10 ? 110 : p.y - p.speed,
-        x: p.x + Math.sin(p.y * 0.02) * 0.03,
-        rotation: p.rotation + p.rotationSpeed
-      })));
-      setFloatingEqs(prev => prev.map(eq => ({
-        ...eq,
-        y: eq.y - eq.speed < -5 ? 105 : eq.y - eq.speed
-      })));
-    }, 50);
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    setMousePos({
-      x: (e.clientX / window.innerWidth - 0.5) * 12,
-      y: (e.clientY / window.innerHeight - 0.5) * 12
-    });
-  }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const resize = () => {
-      const parent = canvas.parentElement;
-      if (parent) {
-        canvas.width = parent.clientWidth;
-        canvas.height = parent.clientHeight;
-      }
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const nodes: { x: number; y: number; vx: number; vy: number; baseX: number; baseY: number }[] = [];
-    const gridSize = 100;
-    for (let x = 0; x < canvas.width + gridSize; x += gridSize) {
-      for (let y = 0; y < canvas.height + gridSize; y += gridSize) {
-        nodes.push({
-          x: x + (Math.random() - 0.5) * 20,
-          y: y + (Math.random() - 0.5) * 20,
-          baseX: x,
-          baseY: y,
-          vx: (Math.random() - 0.5) * 0.2,
-          vy: (Math.random() - 0.5) * 0.2
-        });
-      }
-    }
-
-    const animate = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      nodes.forEach((node, i) => {
-        node.x += node.vx;
-        node.y += node.vy;
-        node.vx += (node.baseX - node.x) * 0.001;
-        node.vy += (node.baseY - node.y) * 0.001;
-        node.vx *= 0.99;
-        node.vy *= 0.99;
-
-        nodes.forEach((other, j) => {
-          if (i >= j) return;
-          const dx = other.x - node.x;
-          const dy = other.y - node.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-
-          if (dist < 120) {
-            const opacity = (1 - dist / 120) * 0.04;
-            ctx.strokeStyle = `rgba(100, 116, 139, ${opacity})`;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(node.x, node.y);
-            ctx.lineTo(other.x, other.y);
-            ctx.stroke();
-          }
-        });
-
-        ctx.fillStyle = 'rgba(100, 116, 139, 0.15)';
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, 1, 0, Math.PI * 2);
-        ctx.fill();
-      });
-
-      animationRef.current = requestAnimationFrame(animate);
-    };
-
-    animate();
-
-    return () => {
-      window.removeEventListener('resize', resize);
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
-    };
-  }, []);
-
   return (
-    <div className="bg-[#0a0a0b] text-white overflow-x-hidden">
-      {/* Hero Section */}
-      <section 
-        className="relative min-h-[90vh] flex items-center justify-center overflow-hidden"
-        onMouseMove={handleMouseMove}
-      >
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a0b] via-[#0a0a0b]/80 to-[#0a0a0b] z-0"></div>
-        <canvas ref={canvasRef} className="absolute inset-0 z-0 opacity-50" />
-        
-        <div className="absolute inset-0 z-1 pointer-events-none">
-          {floatingEqs.map(eq => (
-            <div key={eq.id} className="absolute font-mono text-slate-500 whitespace-nowrap" style={{ left: `${eq.x}%`, top: `${eq.y}%`, fontSize: '16px', opacity: eq.opacity + 0.08, transform: `translate(${mousePos.x * 0.02}px, ${mousePos.y * 0.02}px)` }}>{eq.equation}</div>
-          ))}
-        </div>
+    <div className="bg-stone-50 text-slate-950">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+      />
 
-        <div className="absolute inset-0 z-2 pointer-events-none">
-          {particles.map(particle => (
-            <div key={particle.id} className="absolute font-mono text-slate-400" style={{ left: `${particle.x}%`, top: `${particle.y}%`, fontSize: `${particle.size}px`, opacity: particle.opacity + 0.05, transform: `rotate(${particle.rotation}deg) translate(${mousePos.x * 0.04}px, ${mousePos.y * 0.04}px)` }}>{particle.symbol}</div>
-          ))}
-        </div>
+      <section className="relative isolate min-h-[76vh] overflow-hidden bg-slate-950 px-4 py-16 text-white sm:px-6 lg:px-8">
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 opacity-30"
+          style={{
+            backgroundImage:
+              "linear-gradient(rgba(148,163,184,.22) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,.18) 1px, transparent 1px)",
+            backgroundSize: "48px 48px",
+          }}
+        />
+        <div className="absolute inset-x-0 top-0 h-px bg-teal-300/60" />
+        <div className="relative mx-auto flex max-w-7xl flex-col gap-12">
+          <div className="max-w-4xl pt-6">
+            <div className="mb-8 flex flex-wrap items-center gap-4 text-sm text-slate-300">
+              <Image
+                src="/favicon-192.png"
+                alt="Constant Recognition logo"
+                width={56}
+                height={56}
+                priority
+              />
+              <span className="h-8 w-px bg-slate-700" aria-hidden="true" />
+              <Image
+                src="/cdaaebfdc71641160f831c2a2fb564ce8d081055.png"
+                alt="Jagiellonian University crest"
+                width={34}
+                height={48}
+              />
+              <span>Academic constant-recognition research project</span>
+            </div>
 
-        <div className="relative z-10 text-center px-6" style={{ transform: `translate(${mousePos.x * 0.4}px, ${mousePos.y * 0.4}px)` }}>
-          <h1 className={`text-5xl md:text-7xl lg:text-8xl font-black mb-6 transition-all duration-1000 ${isLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-            <span className="text-white">Constant</span><br />
-            <span className="text-slate-400">Recognition</span>
-          </h1>
-          <div className={`mb-12 transition-all duration-1000 delay-200 ${isLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-            <h2 className="text-xl md:text-2xl text-slate-400 font-medium mb-4">The ultimate inverse symbolic calculator</h2>
-            <p className="text-lg text-slate-500 max-w-lg mx-auto mb-2">
-              <span className="text-slate-600 font-mono">3.14159265...</span> → <span className="text-white font-mono">π</span>
+            <h1 className="max-w-4xl text-5xl font-semibold tracking-normal text-white sm:text-6xl lg:text-7xl">
+              Constant Recognition
+            </h1>
+            <p className="mt-6 max-w-3xl text-xl leading-8 text-slate-200">
+              An inverse symbolic calculator for recovering compact candidate
+              formulas from decimal values. It searches expression space in the
+              browser, then ranks matches by numerical error and expression
+              complexity.
             </p>
-            <p className="text-sm text-slate-600">Find the exact closed form formula from any decimal number</p>
+
+            <div className="mt-10 flex flex-wrap gap-3">
+              <Link
+                href="/calculator"
+                className="inline-flex h-12 items-center rounded-md bg-teal-500 px-5 text-sm font-semibold text-slate-950 transition-colors hover:bg-teal-300"
+              >
+                Open calculator
+              </Link>
+              <Link
+                href="/docs"
+                className="inline-flex h-12 items-center rounded-md border border-slate-600 px-5 text-sm font-semibold text-white transition-colors hover:border-white"
+              >
+                Read documentation
+              </Link>
+            </div>
           </div>
-          <div className={`transition-all duration-1000 delay-400 ${isLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-            <Link href="/calculator">
-              <button className="group relative px-10 py-4 text-lg font-semibold rounded-xl bg-blue-600 hover:bg-blue-500 transition-all duration-300 shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_30px_rgba(37,99,235,0.5)] hover:-translate-y-1">
-                <span className="flex items-center gap-3 text-white">
-                  Launch Calculator
-                  <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                  </svg>
-                </span>
-              </button>
-            </Link>
+
+          <div className="grid gap-4 border-y border-slate-800 py-6 sm:grid-cols-2 lg:grid-cols-4">
+            {metrics.map((metric) => (
+              <div key={metric.label}>
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  {metric.label}
+                </div>
+                <div className="mt-2 font-mono text-lg text-slate-100">
+                  {metric.value}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="font-mono text-sm text-slate-300">
+            <div className="grid gap-3 md:grid-cols-[1fr_auto_1fr_auto_1fr] md:items-center">
+              <code className="rounded-md border border-slate-800 bg-slate-900/80 p-4">
+                input: 1.202056903159594
+              </code>
+              <span className="hidden text-slate-500 md:block">to</span>
+              <code className="rounded-md border border-slate-800 bg-slate-900/80 p-4">
+                search: K &lt;= 7, real domain
+              </code>
+              <span className="hidden text-slate-500 md:block">to</span>
+              <code className="rounded-md border border-teal-500/50 bg-teal-950/40 p-4 text-teal-200">
+                candidate: zeta(3)
+              </code>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* Main Content Sections */}
-      <section className="py-24 px-6 bg-[#0f0f11]">
-        <div className="max-w-4xl mx-auto space-y-24">
-          
-          {/* What it does */}
-          <div className="text-center">
-            <h2 className="text-3xl font-bold mb-6 text-white">Find Formula From Decimal Number</h2>
-            <p className="text-slate-400 text-lg leading-relaxed mb-6">
-              Have you ever encountered a mysterious floating-point value like <code className="text-slate-300 bg-slate-800 px-2 py-1 rounded">1.61803398</code> or <code className="text-slate-300 bg-slate-800 px-2 py-1 rounded">2.50290787</code> and wondered where it came from? ConstantRecognition is a powerful <strong>inverse symbolic calculator</strong> and <strong>closed form finder</strong> that identifies the exact mathematical expression generating your numerical constant.
+      <section className="px-4 py-20 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-7xl">
+          <div className="max-w-3xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-teal-700">
+              What it does
             </p>
-            <p className="text-slate-400 text-lg leading-relaxed">
-              We perform an exhaustive brute-force search over a massive space of equations to instantly recognize mathematical constants, acting as a highly efficient alternative to traditional tools like PSLQ, RIES calculator online, and Wolfram Alpha.
+            <h2 className="mt-3 text-3xl font-semibold tracking-normal text-slate-950 sm:text-4xl">
+              Find candidate closed forms for numbers that look accidental.
+            </h2>
+            <p className="mt-5 text-lg leading-8 text-slate-600">
+              Constant Recognition is built for the moment when a computation
+              produces a value such as 0.915965594177219 or 1.618033988749895
+              and the next question is mathematical, not cosmetic: is there a
+              simple expression behind it?
             </p>
           </div>
 
-          {/* For Whom */}
-          <div className="grid md:grid-cols-2 gap-12 items-center">
-            <div>
-              <h2 className="text-3xl font-bold mb-6 text-white">Who is this for?</h2>
-              <ul className="space-y-4">
-                <li className="flex gap-4">
-                  <div className="mt-1 w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center shrink-0">
-                    <span className="text-blue-400">🔬</span>
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-slate-200">Physicists & Researchers</h3>
-                    <p className="text-slate-500 text-sm">Discover the analytic form behind experimental data or complex simulation outputs.</p>
-                  </div>
-                </li>
-                <li className="flex gap-4">
-                  <div className="mt-1 w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center shrink-0">
-                    <span className="text-purple-400">📐</span>
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-slate-200">Mathematicians</h3>
-                    <p className="text-slate-500 text-sm">Quickly identify numerical constants generated by integrals, infinite sums, or continued fractions.</p>
-                  </div>
-                </li>
-                <li className="flex gap-4">
-                  <div className="mt-1 w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center shrink-0">
-                    <span className="text-green-400">💻</span>
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-slate-200">Engineers & Programmers</h3>
-                    <p className="text-slate-500 text-sm">Reverse-engineer magic numbers found in source code into their exact representations.</p>
-                  </div>
-                </li>
-              </ul>
-            </div>
-            <div className="bg-[#1a1a1c] border border-slate-800 p-8 rounded-2xl shadow-xl">
-              <h3 className="text-xl font-bold text-white mb-4">Example Identification</h3>
-              <div className="space-y-4 font-mono text-sm">
-                <div className="bg-black/50 p-4 rounded text-slate-400">
-                  Input: 1.202056903159594<br/>
-                  <span className="text-green-400">Match found!</span>
-                </div>
-                <div className="flex justify-center py-2 text-2xl text-white">
-                  ζ(3)
-                </div>
-                <div className="text-slate-500 text-center text-xs">Apéry's constant</div>
-              </div>
-            </div>
+          <div className="mt-12 grid gap-5 md:grid-cols-3">
+            {useCases.map((item) => (
+              <article
+                key={item.title}
+                className="rounded-lg border border-slate-200 bg-white p-6"
+              >
+                <h3 className="text-lg font-semibold text-slate-950">
+                  {item.title}
+                </h3>
+                <p className="mt-3 leading-7 text-slate-600">{item.text}</p>
+              </article>
+            ))}
           </div>
+        </div>
+      </section>
 
-          {/* Features */}
+      <section className="border-y border-slate-200 bg-white px-4 py-20 sm:px-6 lg:px-8">
+        <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[0.9fr_1.1fr]">
           <div>
-            <h2 className="text-3xl font-bold mb-10 text-center text-white">Why use ConstantRecognition?</h2>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              <div className="bg-[#1a1a1c] p-6 rounded-xl border border-slate-800 hover:border-slate-600 transition-colors">
-                <h3 className="text-lg font-semibold text-slate-200 mb-2">WebAssembly Fast</h3>
-                <p className="text-slate-500 text-sm">Runs exhaustive brute-force search directly in your browser using high-performance WASM.</p>
-              </div>
-              <div className="bg-[#1a1a1c] p-6 rounded-xl border border-slate-800 hover:border-slate-600 transition-colors">
-                <h3 className="text-lg font-semibold text-slate-200 mb-2">GPU Acceleration</h3>
-                <p className="text-slate-500 text-sm">Offload computations to your graphics card (WebGPU) for massive parallel equation testing.</p>
-              </div>
-              <div className="bg-[#1a1a1c] p-6 rounded-xl border border-slate-800 hover:border-slate-600 transition-colors">
-                <h3 className="text-lg font-semibold text-slate-200 mb-2">100% Free & Local</h3>
-                <p className="text-slate-500 text-sm">No backend hosting costs. The entire algorithm executes on your machine, ensuring complete privacy.</p>
-              </div>
-              <div className="bg-[#1a1a1c] p-6 rounded-xl border border-slate-800 hover:border-slate-600 transition-colors">
-                <h3 className="text-lg font-semibold text-slate-200 mb-2">Open Source Alternative</h3>
-                <p className="text-slate-500 text-sm">A modern, open-source alternative to SymPy nsimplify, Maple identify, and Wolfram Alpha.</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Call to action bottom */}
-          <div className="text-center pb-12">
-            <h2 className="text-2xl font-bold mb-6 text-white">Ready to identify a numerical value?</h2>
-            <Link href="/calculator">
-              <button className="px-8 py-3 text-lg font-semibold rounded-lg bg-white text-black hover:bg-slate-200 transition-colors shadow-lg">
-                Start Calculator
-              </button>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-700">
+              Method
+            </p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-normal text-slate-950 sm:text-4xl">
+              A transparent search pipeline, not a black-box answer.
+            </h2>
+            <p className="mt-5 text-lg leading-8 text-slate-600">
+              The project explores exhaustive expression search over reverse
+              Polish notation, with browser execution as the deployment model.
+              Results are meant to be inspected: the shortest expression is not
+              always the best explanation, so the interface exposes precision,
+              relative error, and compression ratio.
+            </p>
+            <Link
+              href="/compare"
+              className="mt-8 inline-flex h-11 items-center rounded-md border border-slate-300 px-4 text-sm font-semibold text-slate-950 transition-colors hover:border-slate-950"
+            >
+              Compare with PSLQ and RIES
             </Link>
           </div>
 
+          <ol className="grid gap-4">
+            {workflow.map((step, index) => (
+              <li
+                key={step}
+                className="grid grid-cols-[3rem_1fr] gap-4 rounded-lg border border-slate-200 bg-stone-50 p-5"
+              >
+                <span className="font-mono text-sm font-semibold text-teal-700">
+                  0{index + 1}
+                </span>
+                <span className="text-slate-700">{step}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      <section className="px-4 py-20 sm:px-6 lg:px-8">
+        <div className="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[1fr_1fr] lg:items-center">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-rose-800">
+              Separate application
+            </p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-normal text-slate-950 sm:text-4xl">
+              The calculator now opens as a focused research tool.
+            </h2>
+            <p className="mt-5 text-lg leading-8 text-slate-600">
+              The promotional pages explain the project. The calculator route is
+              isolated from the site navigation and footer, so the actual tool
+              has the full viewport for input, settings, workers, and results.
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-white p-6">
+            <div className="border-b border-slate-200 pb-4 font-mono text-sm text-slate-500">
+              /calculator
+            </div>
+            <div className="grid gap-3 py-6 font-mono text-sm">
+              <div className="rounded-md bg-slate-950 p-3 text-slate-100">
+                z = 3.141592653589793
+              </div>
+              <div className="rounded-md bg-stone-100 p-3 text-slate-700">
+                backend: WebAssembly CPU
+              </div>
+              <div className="rounded-md bg-teal-50 p-3 text-teal-800">
+                ranked candidate: pi
+              </div>
+            </div>
+            <Link
+              href="/calculator"
+              className="inline-flex h-11 items-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition-colors hover:bg-teal-800"
+            >
+              Launch the app
+            </Link>
+          </div>
         </div>
       </section>
     </div>

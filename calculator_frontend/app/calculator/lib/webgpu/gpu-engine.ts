@@ -84,8 +84,8 @@ export class ConstantRecognitionGPU {
         if (typeof adapter.requestAdapterInfo === 'function') {
           const info = await adapter.requestAdapterInfo();
           gpuName = info.description || info.device || info.vendor || 'WebGPU Device';
-        } else if ((adapter as any).name) {
-          gpuName = (adapter as any).name;
+        } else if (typeof adapter.name === 'string' && adapter.name.length > 0) {
+          gpuName = adapter.name;
         }
       } catch (e) {
         console.warn('[WebGPU] Could not get adapter info:', e);
@@ -392,7 +392,7 @@ export class ConstantRecognitionGPU {
         counterBuffer?.destroy();
         readBuffer?.destroy();
         counterReadBuffer?.destroy();
-      } catch (e) {
+      } catch {
         // Ignore cleanup errors
       }
     }
