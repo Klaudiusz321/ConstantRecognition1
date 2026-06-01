@@ -4,7 +4,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Worked Examples",
   description:
-    "Worked examples for recognizing constants from decimal values with Constant Recognition.",
+    "Scientific and teaching examples for recognizing constants from decimal values with Constant Recognition.",
   alternates: {
     canonical: "/examples",
   },
@@ -12,40 +12,46 @@ export const metadata: Metadata = {
 
 const examples = [
   {
-    name: "Pi",
-    value: "3.141592653589793",
-    formula: "pi",
-    note: "A baseline check for recognizing a fundamental constant directly.",
+    group: "Numerical calculation",
+    input: "0.51404189589007076139762973957688",
+    candidate: "5*pi^2/96",
+    lesson:
+      "A high-precision numerical result can suggest a compact analytic form.",
   },
   {
-    name: "Euler number",
-    value: "2.718281828459045",
-    formula: "e",
-    note: "Useful for confirming that the selected calculator mode includes exponential constants.",
+    group: "Floating-point output",
+    input: "0.22222222222",
+    candidate: "2/9",
+    lesson:
+      "Finite decimal output can hide a simple rational number.",
   },
   {
-    name: "Golden ratio",
-    value: "1.618033988749895",
-    formula: "(1 + sqrt(5)) / 2",
-    note: "A compact algebraic expression that should rank strongly at low K.",
+    group: "Elementary functions",
+    input: "0.846153846153846",
+    candidate: "tanh(log(sqrt(12))) = 11/13",
+    lesson:
+      "A recognizer can turn a non-obvious function identity into an exercise.",
   },
   {
-    name: "Apery's constant",
-    value: "1.202056903159594",
-    formula: "zeta(3)",
-    note: "A good example of a named constant whose recognition depends on the enabled operations.",
+    group: "Known constants",
+    input: "1.202056903159594",
+    candidate: "zeta(3)",
+    lesson:
+      "Named constants are useful tests, but availability depends on the calculator alphabet.",
   },
   {
-    name: "Gaussian integral half-value",
-    value: "0.886226925452758",
-    formula: "sqrt(pi) / 2",
-    note: "Shows how a value produced by an integral can reduce to a simple expression.",
+    group: "Gaussian integral",
+    input: "0.886226925452758",
+    candidate: "sqrt(pi)/2",
+    lesson:
+      "A numerical integral can be checked against a familiar closed form.",
   },
   {
-    name: "Catalan constant",
-    value: "0.915965594177219",
-    formula: "G",
-    note: "A useful test for distinguishing named constants from nearby numerical coincidences.",
+    group: "Integer identity",
+    input: "2026",
+    candidate: "1 + (9*5)^2",
+    lesson:
+      "Date-like and integer searches are demonstrations, not evidence of a scientific law.",
   },
 ];
 
@@ -54,16 +60,16 @@ export default function ExamplesPage() {
     <div className="bg-stone-50 text-slate-950">
       <section className="border-b border-slate-200 bg-white px-4 py-16 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-5xl">
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-teal-700">
-            Examples
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-700">
+            Worked examples
           </p>
           <h1 className="mt-3 max-w-4xl text-4xl font-semibold tracking-normal sm:text-5xl">
-            Start with known constants, then test your own data.
+            Examples for numerical work and teaching
           </h1>
           <p className="mt-6 max-w-3xl text-lg leading-8 text-slate-600">
-            These values are intentionally familiar. They help calibrate search
-            depth, precision assumptions, and enabled operations before running
-            the calculator on research data or unexplained simulation output.
+            The point of an example is not that the program is impressive. The
+            point is to see how much mathematical structure is already implied
+            by a numerical value and a chosen expression alphabet.
           </p>
         </div>
       </section>
@@ -72,53 +78,45 @@ export default function ExamplesPage() {
         <div className="mx-auto grid max-w-6xl gap-5 md:grid-cols-2">
           {examples.map((example) => (
             <article
-              key={example.name}
+              key={`${example.group}-${example.input}`}
               className="rounded-lg border border-slate-200 bg-white p-6"
             >
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-xl font-semibold text-slate-950">
-                    {example.name}
-                  </h2>
-                  <p className="mt-2 leading-7 text-slate-600">
-                    {example.note}
-                  </p>
-                </div>
-                <span className="rounded-md bg-teal-50 px-3 py-1 font-mono text-sm text-teal-800">
-                  {example.formula}
-                </span>
+              <div className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                {example.group}
               </div>
-
-              <div className="mt-6 grid gap-3 font-mono text-sm">
+              <div className="grid gap-3 font-mono text-sm">
                 <div className="rounded-md border border-slate-200 bg-stone-50 p-3 text-slate-700">
-                  target = {example.value}
+                  z = {example.input}
                 </div>
-                <div className="rounded-md border border-slate-200 bg-white p-3 text-slate-700">
-                  candidate = {example.formula}
+                <div className="rounded-md border border-cyan-200 bg-cyan-50 p-3 text-cyan-900">
+                  candidate = {example.candidate}
                 </div>
               </div>
+              <p className="mt-4 leading-7 text-slate-600">
+                {example.lesson}
+              </p>
             </article>
           ))}
         </div>
       </section>
 
       <section className="border-t border-slate-200 bg-white px-4 py-16 sm:px-6 lg:px-8">
-        <div className="mx-auto flex max-w-5xl flex-col gap-6 md:flex-row md:items-center md:justify-between">
+        <div className="mx-auto grid max-w-5xl gap-8 md:grid-cols-[1fr_auto] md:items-center">
           <div>
             <h2 className="text-2xl font-semibold text-slate-950">
-              Ready to run a value from your own work?
+              How to use these examples
             </h2>
-            <p className="mt-2 max-w-2xl text-slate-600">
-              Enter the decimal value in the calculator and start with a
-              conservative K limit. Increase the search only after inspecting
-              the early candidates.
+            <p className="mt-2 max-w-2xl leading-7 text-slate-600">
+              Start with a small K. If the expected expression does not appear,
+              check whether the calculator alphabet contains the required
+              constants and functions, then increase K only as needed.
             </p>
           </div>
           <Link
             href="/calculator"
-            className="inline-flex h-11 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition-colors hover:bg-teal-800"
+            className="inline-flex h-11 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition-colors hover:bg-cyan-800"
           >
-            Open calculator
+            Run calculator
           </Link>
         </div>
       </section>

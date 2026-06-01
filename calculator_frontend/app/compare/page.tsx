@@ -1,35 +1,34 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Method Comparison",
+  title: "Relation to Other Methods",
   description:
-    "Compare Constant Recognition with PSLQ, RIES, SymPy nsimplify, Maple identify, and Wolfram Alpha for numerical constant recognition.",
+    "Academic comparison of Constant Recognition with PSLQ, RIES, CAS tools, and numerical verification workflows.",
   alternates: {
     canonical: "/compare",
   },
 };
 
 const rows = [
-  ["Primary use", "Browser search", "Integer relations", "Inverse equation search", "General CAS"],
-  ["Execution", "Local WASM/WebGPU", "Local library/tool", "Native CLI", "Cloud or local"],
-  ["Best fit", "Exploration and sharing", "High-precision relation tests", "Broad expression search", "Symbolic workflows"],
-  ["Privacy", "No upload by design", "Local", "Local unless hosted", "Depends on service"],
-  ["Deployment", "Static web app", "Python/CAS environment", "Compiled native binary", "Service or installed CAS"],
+  ["Question", "Can a short calculator program reproduce z?", "Is z in an integer relation over a chosen basis?", "Can an inverse equation solver find a compact expression?", "Can a general symbolic system simplify or prove it?"],
+  ["Input requirement", "Decimal value and uncertainty", "High-precision value and basis", "Decimal value and operator set", "Symbolic expression or high-level query"],
+  ["Strength", "Transparent enumeration of a defined search space", "Strong theory for integer relations", "Mature inverse-search approach", "Broad symbolic and numerical functionality"],
+  ["Weakness", "Combinatorial growth with K", "Requires the right basis", "Usually a native/CLI workflow", "May hide method details or require manual setup"],
+  ["Best role", "Exploration and teaching", "Verification after a plausible basis is known", "Independent comparison", "Proof, simplification, and high-precision checks"],
 ];
 
 const notes = [
   {
-    title: "PSLQ and LLL remain essential",
-    body: "Integer-relation algorithms are mathematically powerful when the basis is known and high precision is available. Constant Recognition is complementary: it explores expression candidates directly.",
+    title: "This is not a replacement for proof",
+    body: "The recognizer proposes candidates. A mathematical identity still needs independent verification.",
   },
   {
-    title: "RIES is the closest conceptual neighbor",
-    body: "RIES is a mature inverse equation solver. This project focuses on a browser-native, static-deployable experience with local WASM workers and experimental GPU acceleration.",
+    title: "The search space is explicit",
+    body: "Changing the calculator alphabet changes what can be found. A missing operation means a true formula may be unreachable.",
   },
   {
-    title: "CAS tools are broader",
-    body: "Systems such as Mathematica, Maple, and SymPy cover much more than constant recognition. This project is narrower and designed for quick public use of one workflow.",
+    title: "Precision matters",
+    body: "If the input has only a few reliable digits, many unrelated short formulas may look plausible.",
   },
 ];
 
@@ -38,30 +37,30 @@ export default function ComparePage() {
     <div className="bg-stone-50 text-slate-950">
       <section className="border-b border-slate-200 bg-white px-4 py-16 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-5xl">
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-teal-700">
-            Comparison
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-700">
+            Relation to other methods
           </p>
           <h1 className="mt-3 max-w-4xl text-4xl font-semibold tracking-normal sm:text-5xl">
-            Where Constant Recognition fits among established tools
+            Constant recognition is a numerical experiment
           </h1>
           <p className="mt-6 max-w-3xl text-lg leading-8 text-slate-600">
-            The project is not a replacement for every symbolic system. Its
-            purpose is focused: a public, local, browser-based inverse symbolic
-            calculator for numerical constants and candidate closed forms.
+            The tool belongs next to PSLQ, RIES, computer algebra systems, and
+            high-precision verification. It is useful because the searched
+            expression space is concrete and inspectable.
           </p>
         </div>
       </section>
 
       <section className="px-4 py-16 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-6xl overflow-x-auto rounded-lg border border-slate-200 bg-white">
-          <table className="w-full min-w-[860px] border-collapse text-left text-sm">
+        <div className="mx-auto max-w-7xl overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          <table className="w-full min-w-[980px] border-collapse text-left text-sm">
             <thead className="bg-slate-950 text-white">
               <tr>
-                <th className="px-4 py-4 font-semibold">Dimension</th>
+                <th className="px-4 py-4 font-semibold">Aspect</th>
                 <th className="px-4 py-4 font-semibold">Constant Recognition</th>
                 <th className="px-4 py-4 font-semibold">PSLQ / LLL</th>
-                <th className="px-4 py-4 font-semibold">RIES</th>
-                <th className="px-4 py-4 font-semibold">CAS / Wolfram Alpha</th>
+                <th className="px-4 py-4 font-semibold">RIES-like search</th>
+                <th className="px-4 py-4 font-semibold">CAS tools</th>
               </tr>
             </thead>
             <tbody>
@@ -70,7 +69,7 @@ export default function ComparePage() {
                   {row.map((cell, index) => (
                     <td
                       key={cell}
-                      className={`px-4 py-4 ${index === 0 ? "font-semibold text-slate-950" : "text-slate-600"}`}
+                      className={`px-4 py-4 align-top leading-6 ${index === 0 ? "font-semibold text-slate-950" : "text-slate-600"}`}
                     >
                       {cell}
                     </td>
@@ -95,27 +94,6 @@ export default function ComparePage() {
               <p className="mt-3 leading-7 text-slate-600">{note.body}</p>
             </article>
           ))}
-        </div>
-      </section>
-
-      <section className="px-4 py-16 sm:px-6 lg:px-8">
-        <div className="mx-auto flex max-w-5xl flex-col gap-6 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-2xl font-semibold text-slate-950">
-              Use the calculator as a discovery layer.
-            </h2>
-            <p className="mt-2 max-w-2xl text-slate-600">
-              Promising candidates should be verified with independent
-              high-precision evaluation, symbolic manipulation, or a
-              domain-specific derivation.
-            </p>
-          </div>
-          <Link
-            href="/docs#accuracy"
-            className="inline-flex h-11 items-center justify-center rounded-md border border-slate-300 px-4 text-sm font-semibold text-slate-950 transition-colors hover:border-slate-950"
-          >
-            Read verification notes
-          </Link>
         </div>
       </section>
     </div>

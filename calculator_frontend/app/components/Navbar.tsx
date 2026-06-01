@@ -3,9 +3,9 @@ import Link from "next/link";
 
 const links = [
   { href: "/examples", label: "Examples" },
-  { href: "/compare", label: "Compare" },
-  { href: "/docs", label: "Docs" },
-  { href: "/blog", label: "Research notes" },
+  { href: "/docs", label: "Method notes" },
+  { href: "/compare", label: "Other methods" },
+  { href: "/blog", label: "Notes" },
 ];
 
 export default function Navbar() {
@@ -42,7 +42,7 @@ export default function Navbar() {
           href="/calculator"
           className="inline-flex h-10 items-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition-colors hover:bg-teal-800"
         >
-          Open calculator
+          Run calculator
         </Link>
       </nav>
     </header>

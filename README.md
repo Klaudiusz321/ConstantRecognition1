@@ -1,10 +1,14 @@
-C code for recognition/identification/search of mathematical formulas, equivalent to numerical, e.g.,  137.035999206. 
+# Constant Recognition
 
-Brute-force search is performed in parallel using specified number of threads. 
-RPN scientific calculator with 36 standard buttons is used to define space of possible formulas. 
-Codes are encoded as subsequent base-36 numbers, where digits are associated with calculator butons. 
+Constant Recognition is an academic inverse symbolic calculator for recognizing numerical constants and recovering candidate closed-form expressions from decimal values.
 
-WASM version can be tested online https://th.if.uj.edu.pl/~odrzywolek/WASM/
+The project combines a native C search engine, WebAssembly workers, and an experimental WebGPU path. The browser frontend is designed for public use and static hosting, while the native code remains available for longer-running local experiments and integration work.
+
+- Public web app: `calculator_frontend/`
+- Frontend deployment notes: `calculator_frontend/README.md`
+- Core search implementation: `C/`, `WASM/`, and `algorithms/`
+
+The search enumerates expressions encoded as reverse Polish notation over calculator instruction sets. Candidate formulas are evaluated against the target value and ranked by numerical error, expression length, and compression ratio.
 
 
 
@@ -186,5 +190,4 @@ Understanding existing tools helps position our project:
 | **Motzkin number** | Count of valid RPN ternary structures for length K |
 | **CALC4** | Our standard 36-button calculator (13 const + 18 unary + 5 binary) |
 | **EmL** | Theoretical minimal calculator with single operation |
-
 

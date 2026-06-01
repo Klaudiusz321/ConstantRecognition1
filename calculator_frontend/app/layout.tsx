@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     template: "%s | Constant Recognition",
   },
   description:
-    "Identify numerical constants and recover compact closed forms from decimal values with a browser-based inverse symbolic calculator using WebAssembly and experimental WebGPU.",
+    "Inverse scientific RPN calculator for testing whether numerical values can be reproduced by compact candidate formulas.",
   keywords: [
     "constant recognition",
     "inverse symbolic calculator",
@@ -47,7 +47,7 @@ export const metadata: Metadata = {
     siteName: "Constant Recognition",
     title: "Constant Recognition | Inverse Symbolic Calculator",
     description:
-      "A local, open-source tool for recognizing numerical constants and searching for compact analytic expressions.",
+      "A browser implementation of inverse RPN search for numerical constant recognition.",
     images: [
       {
         url: "/opengraph-image.png",
@@ -61,7 +61,7 @@ export const metadata: Metadata = {
     card: "summary",
     title: "Constant Recognition | Inverse Symbolic Calculator",
     description:
-      "Recover candidate closed forms from decimal values directly in the browser.",
+      "Search short RPN calculator programs that reproduce a numerical value.",
     images: ["/twitter-image.png"],
   },
   icons: {

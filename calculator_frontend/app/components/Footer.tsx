@@ -18,9 +18,9 @@ export default function Footer() {
             </h3>
           </div>
           <p className="max-w-sm text-sm leading-6 text-slate-600">
-            An academic inverse symbolic calculator for recovering candidate
-            closed forms from numerical values. The calculator runs locally in
-            the browser with WebAssembly and experimental WebGPU support.
+            An inverse scientific RPN calculator for testing whether numerical
+            values have compact candidate formulas. Results are numerical leads,
+            not proofs.
           </p>
         </div>
 
@@ -29,17 +29,17 @@ export default function Footer() {
           <ul className="space-y-3 text-sm text-slate-600">
             <li>
               <Link className="hover:text-slate-950" href="/calculator">
-                Calculator app
+                Run calculator
               </Link>
             </li>
             <li>
               <Link className="hover:text-slate-950" href="/examples">
-                Worked examples
+                Numerical examples
               </Link>
             </li>
             <li>
               <Link className="hover:text-slate-950" href="/compare">
-                Method comparison
+                Relation to methods
               </Link>
             </li>
           </ul>
@@ -57,12 +57,12 @@ export default function Footer() {
             </li>
             <li>
               <Link className="hover:text-slate-950" href="/docs#accuracy">
-                Accuracy model
+                Notation and ranking
               </Link>
             </li>
             <li>
-              <Link className="hover:text-slate-950" href="/docs#citation">
-                Citation
+              <Link className="hover:text-slate-950" href="/docs#limitations">
+                Limitations
               </Link>
             </li>
           </ul>
@@ -88,8 +88,8 @@ export default function Footer() {
       </div>
 
       <div className="mx-auto mt-10 max-w-7xl border-t border-slate-200 pt-6 text-xs text-slate-500">
-        Built for reproducible numerical exploration, local execution, and
-        transparent comparison with established constant-recognition tools.
+        Record z, uncertainty, K, calculator alphabet, backend, and the
+        independent verification used for any reported candidate.
       </div>
     </footer>
   );
