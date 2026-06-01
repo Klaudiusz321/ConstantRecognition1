@@ -43,6 +43,7 @@ cuda/constant_gpu_fp32
 cuda/constant_gpu_fp32_hybrid
 
 # ==== Emscripten SDK (submodule/downloaded) ====
+emsdk2/
 emsdk/upstream/
 emsdk/downloads/
 emsdk/node/
