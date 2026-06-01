@@ -82,6 +82,13 @@ describe('Frontend Input Parsing Logic', () => {
       expect(parsed.imag).toBeCloseTo(0, 15);
       expect(parsed.isComplex).toBe(true);
     });
+
+    it('parses a negative pure-imaginary decimal target', () => {
+      const parsed = parseSearchInput('-0.86602540378443864676372317075294i');
+      expect(parsed.real).toBe(0);
+      expect(parsed.imag).toBeCloseTo(-Math.sqrt(3) / 2, 15);
+      expect(parsed.isComplex).toBe(true);
+    });
   });
 
   describe('Precision modes', () => {
@@ -118,6 +125,12 @@ describe('Frontend Input Parsing Logic', () => {
       expect(result.real).toBeCloseTo(Math.exp(-Math.PI / 2), 15);
       expect(result.imag).toBeCloseTo(0, 15);
       expect(evaluateRPNDisplay('IIz', 'complex')).toBe('0.2078795763507619');
+    });
+
+    it('evaluates a short-RPN formula for -sqrt(3)/2 i', () => {
+      const result = evaluateShortRPNComplex('qapyI277');
+      expect(result.real).toBeCloseTo(0, 15);
+      expect(result.imag).toBeCloseTo(-Math.sqrt(3) / 2, 15);
     });
   });
 });

@@ -47,6 +47,33 @@ fn cabs(z: vec2<f32>) -> f32 {
     return length(z);
 }
 
+fn atan2_compat(y: f32, x: f32) -> f32 {
+    if (x > 0.0) {
+        return atan(y / x);
+    }
+    if (x < 0.0 && y >= 0.0) {
+        return atan(y / x) + PI;
+    }
+    if (x < 0.0 && y < 0.0) {
+        return atan(y / x) - PI;
+    }
+    if (x == 0.0 && y > 0.0) {
+        return PI * 0.5;
+    }
+    if (x == 0.0 && y < 0.0) {
+        return -PI * 0.5;
+    }
+    return 0.0;
+}
+
+fn sinh_compat(x: f32) -> f32 {
+    return 0.5 * (exp(x) - exp(-x));
+}
+
+fn cosh_compat(x: f32) -> f32 {
+    return 0.5 * (exp(x) + exp(-x));
+}
+
 fn cadd(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     return a + b;
 }
@@ -73,7 +100,7 @@ fn cexp(z: vec2<f32>) -> vec2<f32> {
 }
 
 fn clog(z: vec2<f32>) -> vec2<f32> {
-    return vec2<f32>(log(cabs(z)), atan2(z.y, z.x));
+    return vec2<f32>(log(cabs(z)), atan2_compat(z.y, z.x));
 }
 
 fn cpow(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
@@ -89,11 +116,11 @@ fn csqrt(z: vec2<f32>) -> vec2<f32> {
 }
 
 fn csin(z: vec2<f32>) -> vec2<f32> {
-    return vec2<f32>(sin(z.x) * cosh(z.y), cos(z.x) * sinh(z.y));
+    return vec2<f32>(sin(z.x) * cosh_compat(z.y), cos(z.x) * sinh_compat(z.y));
 }
 
 fn ccos(z: vec2<f32>) -> vec2<f32> {
-    return vec2<f32>(cos(z.x) * cosh(z.y), -sin(z.x) * sinh(z.y));
+    return vec2<f32>(cos(z.x) * cosh_compat(z.y), -sin(z.x) * sinh_compat(z.y));
 }
 
 fn ctan(z: vec2<f32>) -> vec2<f32> {
@@ -101,11 +128,11 @@ fn ctan(z: vec2<f32>) -> vec2<f32> {
 }
 
 fn csinh(z: vec2<f32>) -> vec2<f32> {
-    return vec2<f32>(sinh(z.x) * cos(z.y), cosh(z.x) * sin(z.y));
+    return vec2<f32>(sinh_compat(z.x) * cos(z.y), cosh_compat(z.x) * sin(z.y));
 }
 
 fn ccosh(z: vec2<f32>) -> vec2<f32> {
-    return vec2<f32>(cosh(z.x) * cos(z.y), sinh(z.x) * sin(z.y));
+    return vec2<f32>(cosh_compat(z.x) * cos(z.y), sinh_compat(z.x) * sin(z.y));
 }
 
 fn ctanh(z: vec2<f32>) -> vec2<f32> {

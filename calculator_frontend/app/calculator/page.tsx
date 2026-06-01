@@ -340,6 +340,10 @@ export default function CalculatorPage() {
           };
         });
 
+        if (mappedResults.length === 0) {
+          throw new Error('GPU returned no verified candidates');
+        }
+
         setResults(mappedResults);
         if (timerRef.current) {
           clearInterval(timerRef.current);

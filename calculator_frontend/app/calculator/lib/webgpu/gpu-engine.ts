@@ -187,13 +187,16 @@ export class ConstantRecognitionGPU {
     }
 
     const shaderModule = this.device.createShaderModule({ code: shaderCode });
-    const pipeline = this.device.createComputePipeline({
+    const pipelineDescriptor: GPUComputePipelineDescriptor = {
       layout: 'auto',
       compute: {
         module: shaderModule,
         entryPoint: 'main',
       },
-    });
+    };
+    const pipeline = this.device.createComputePipelineAsync
+      ? await this.device.createComputePipelineAsync(pipelineDescriptor)
+      : this.device.createComputePipeline(pipelineDescriptor);
 
     this.shaderModules[domain] = shaderModule;
     this.pipelines[domain] = pipeline;

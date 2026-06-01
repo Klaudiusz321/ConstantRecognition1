@@ -30,6 +30,7 @@ declare global {
   interface GPUDevice {
     createShaderModule(descriptor: { code: string }): GPUShaderModule;
     createComputePipeline(descriptor: GPUComputePipelineDescriptor): GPUComputePipeline;
+    createComputePipelineAsync?(descriptor: GPUComputePipelineDescriptor): Promise<GPUComputePipeline>;
     createBuffer(descriptor: GPUBufferDescriptor): GPUBuffer;
     createBindGroup(descriptor: GPUBindGroupDescriptor): GPUBindGroup;
     createCommandEncoder(): GPUCommandEncoder;
