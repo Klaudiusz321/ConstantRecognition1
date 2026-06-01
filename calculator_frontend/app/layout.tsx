@@ -5,7 +5,7 @@ import "katex/dist/katex.min.css";
 import "./globals.css";
 import AppShell from "./components/AppShell";
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://constantrecognition.app";
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://constantrecognizer.com";
 
 export const viewport: Viewport = {
   themeColor: "#0f172a",
