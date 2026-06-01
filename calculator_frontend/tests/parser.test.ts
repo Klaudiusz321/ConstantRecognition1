@@ -116,6 +116,13 @@ describe('Frontend Input Parsing Logic', () => {
       expect(result.imag).toBeCloseTo(0, 15);
       expect(evaluateRPNDisplay('I, I, POWER', 'complex')).toBe('0.2078795763507619');
     });
+
+    it('keeps the negative branch for tan(arccos(2))', () => {
+      const result = evaluateRPNComplex('TWO, ARCCOS, TAN');
+      expect(result.real).toBeCloseTo(0, 15);
+      expect(result.imag).toBeCloseTo(-Math.sqrt(3) / 2, 15);
+      expect(evaluateRPNDisplay('TWO, ARCCOS, TAN', 'complex')).toMatch(/^-0\.866025403784438[56]i$/);
+    });
   });
 
   describe('Complex WebGPU short RPN helpers', () => {
@@ -129,6 +136,12 @@ describe('Frontend Input Parsing Logic', () => {
 
     it('evaluates a short-RPN formula for -sqrt(3)/2 i', () => {
       const result = evaluateShortRPNComplex('qapyI277');
+      expect(result.real).toBeCloseTo(0, 15);
+      expect(result.imag).toBeCloseTo(-Math.sqrt(3) / 2, 15);
+    });
+
+    it('keeps the negative arccos branch in short RPN', () => {
+      const result = evaluateShortRPNComplex('pfg');
       expect(result.real).toBeCloseTo(0, 15);
       expect(result.imag).toBeCloseTo(-Math.sqrt(3) / 2, 15);
     });

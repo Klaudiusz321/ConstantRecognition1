@@ -230,7 +230,7 @@ const cpow = (a: ComplexValue, b: ComplexValue): ComplexValue => cleanComplex(ce
 const csqrt = (z: ComplexValue): ComplexValue => {
   const r = Math.hypot(z.real, z.imag);
   let sign = 1;
-  if (z.imag < 0) sign = -1;
+  if (z.imag < 0 || Object.is(z.imag, -0)) sign = -1;
   return cleanComplex({
     real: Math.sqrt((r + z.real) / 2),
     imag: sign * Math.sqrt(Math.max(0, (r - z.real) / 2))

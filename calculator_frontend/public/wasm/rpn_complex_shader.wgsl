@@ -110,7 +110,8 @@ fn cpow(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
 fn csqrt(z: vec2<f32>) -> vec2<f32> {
     let r = cabs(z);
     let real = sqrt(max(0.0, (r + z.x) * 0.5));
-    let sign = select(1.0, -1.0, z.y < 0.0);
+    let negative_zero = bitcast<u32>(z.y) == 0x80000000u;
+    let sign = select(1.0, -1.0, z.y < 0.0 || negative_zero);
     let imag = sign * sqrt(max(0.0, (r - z.x) * 0.5));
     return vec2<f32>(real, imag);
 }
