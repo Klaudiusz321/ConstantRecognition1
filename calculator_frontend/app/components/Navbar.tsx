@@ -14,8 +14,8 @@ export default function Navbar() {
       <nav className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         <Link href="/" className="flex min-w-0 items-center gap-3">
           <Image
-            src="/favicon-192.png"
-            alt=""
+            src="/constant-recognizer-brand-pack/logo-mark.svg"
+            alt="Constant Recognition logo"
             width={34}
             height={34}
             className="h-8 w-8 shrink-0"

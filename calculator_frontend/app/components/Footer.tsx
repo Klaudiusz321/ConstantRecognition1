@@ -7,7 +7,12 @@ export default function Footer() {
       <div className="mx-auto grid max-w-7xl gap-10 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
         <div>
           <div className="mb-4 flex items-center gap-3">
-            <Image src="/favicon-192.png" alt="" width={36} height={36} />
+            <Image
+              src="/constant-recognizer-brand-pack/logo-mark.svg"
+              alt="Constant Recognition logo"
+              width={36}
+              height={36}
+            />
             <h3 className="text-base font-semibold text-slate-950">
               Constant Recognition
             </h3>

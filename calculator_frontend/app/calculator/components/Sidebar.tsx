@@ -144,14 +144,14 @@ export function Sidebar({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Image
-                src={withBasePath('/cdaaebfdc71641160f831c2a2fb564ce8d081055.png')}
-                alt="Logo" 
+                src={withBasePath('/constant-recognizer-brand-pack/logo-mark.svg')}
+                alt="Constant Recognition logo" 
                 width={40}
                 height={40}
                 className="w-10 h-10 rounded-lg object-cover"
               />
               <div>
-                <h1 className="font-semibold text-gray-900 dark:text-white text-sm">Constant Recognizer</h1>
+                <h1 className="font-semibold text-gray-900 dark:text-white text-sm">Constant Recognition</h1>
                 <p className="text-[10px] text-gray-500">Jagiellonian University</p>
               </div>
             </div>

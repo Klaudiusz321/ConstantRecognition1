@@ -80,7 +80,7 @@ export default function LandingPage() {
           <div className="max-w-4xl pt-6">
             <div className="mb-8 flex flex-wrap items-center gap-4 text-sm text-slate-300">
               <Image
-                src="/favicon-192.png"
+                src="/constant-recognizer-brand-pack/logo-mark.svg"
                 alt="Constant Recognition logo"
                 width={56}
                 height={56}
