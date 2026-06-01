@@ -222,9 +222,12 @@ const clog = (z: ComplexValue): ComplexValue => ({ real: Math.log(Math.hypot(z.r
 const cpow = (a: ComplexValue, b: ComplexValue): ComplexValue => cexp(cmul(b, clog(a)));
 const csqrt = (z: ComplexValue): ComplexValue => {
   const r = Math.hypot(z.real, z.imag);
+  let sign = 1;
+  if (z.imag < 0) sign = -1;
+  else if (Object.is(z.imag, -0)) sign = -1;
   return {
     real: Math.sqrt((r + z.real) / 2),
-    imag: Math.sign(z.imag || 1) * Math.sqrt(Math.max(0, (r - z.real) / 2))
+    imag: sign * Math.sqrt(Math.max(0, (r - z.real) / 2))
   };
 };
 const csin = (z: ComplexValue): ComplexValue => ({ real: Math.sin(z.real) * Math.cosh(z.imag), imag: Math.cos(z.real) * Math.sinh(z.imag) });
