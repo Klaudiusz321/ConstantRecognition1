@@ -231,17 +231,57 @@ const csin = (z: ComplexValue): ComplexValue => ({ real: Math.sin(z.real) * Math
 const ccos = (z: ComplexValue): ComplexValue => ({ real: Math.cos(z.real) * Math.cosh(z.imag), imag: -Math.sin(z.real) * Math.sinh(z.imag) });
 const ctan = (z: ComplexValue): ComplexValue => cdiv(csin(z), ccos(z));
 
+const carcsin = (z: ComplexValue): ComplexValue => {
+  const iz = { real: -z.imag, imag: z.real };
+  const z2 = cmul(z, z);
+  const one_minus_z2 = { real: 1 - z2.real, imag: -z2.imag };
+  const term = cadd(iz, csqrt(one_minus_z2));
+  const ln_term = clog(term);
+  return { real: ln_term.imag, imag: -ln_term.real };
+};
+const carccos = (z: ComplexValue): ComplexValue => {
+  const asin = carcsin(z);
+  return { real: Math.PI/2 - asin.real, imag: -asin.imag };
+};
+const carctan = (z: ComplexValue): ComplexValue => {
+  const num = { real: z.real, imag: 1 + z.imag };
+  const den = { real: -z.real, imag: 1 - z.imag };
+  const frac = cdiv(num, den);
+  const ln_term = clog(frac);
+  return { real: -ln_term.imag / 2, imag: ln_term.real / 2 };
+};
+const carcsinh = (z: ComplexValue): ComplexValue => {
+  const z2 = cmul(z, z);
+  const z2_plus_1 = { real: z2.real + 1, imag: z2.imag };
+  const term = cadd(z, csqrt(z2_plus_1));
+  return clog(term);
+};
+const carccosh = (z: ComplexValue): ComplexValue => {
+  const z_minus_1 = { real: z.real - 1, imag: z.imag };
+  const z_plus_1 = { real: z.real + 1, imag: z.imag };
+  const term = cadd(z, cmul(csqrt(z_minus_1), csqrt(z_plus_1)));
+  return clog(term);
+};
+const carctanh = (z: ComplexValue): ComplexValue => {
+  const t1 = clog({ real: 1 + z.real, imag: z.imag });
+  const t2 = clog({ real: 1 - z.real, imag: -z.imag });
+  const diff = csub(t1, t2);
+  return { real: diff.real / 2, imag: diff.imag / 2 };
+};
+
 const complexFunctions: Record<string, (x: ComplexValue) => ComplexValue> = {
   "EXP": cexp, "LOG": clog, "INV": x => cdiv({ real: 1, imag: 0 }, x),
   "MINUS": x => ({ real: -x.real, imag: -x.imag }),
   "SIN": csin, "COS": ccos, "TAN": ctan, "SQRT": csqrt,
   "SQR": x => cmul(x, x),
+  "ARCSIN": carcsin, "ARCCOS": carccos, "ARCTAN": carctan,
   "SINH": x => ({ real: Math.sinh(x.real) * Math.cos(x.imag), imag: Math.cosh(x.real) * Math.sin(x.imag) }),
   "COSH": x => ({ real: Math.cosh(x.real) * Math.cos(x.imag), imag: Math.sinh(x.real) * Math.sin(x.imag) }),
   "TANH": x => cdiv(
     { real: Math.sinh(x.real) * Math.cos(x.imag), imag: Math.cosh(x.real) * Math.sin(x.imag) },
     { real: Math.cosh(x.real) * Math.cos(x.imag), imag: Math.sinh(x.real) * Math.sin(x.imag) }
   ),
+  "ARCSINH": carcsinh, "ARCCOSH": carccosh, "ARCTANH": carctanh,
   "GAMMA": x => x.imag === 0 ? { real: gamma(x.real), imag: 0 } : { real: NaN, imag: NaN }
 };
 
