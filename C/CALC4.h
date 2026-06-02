@@ -38,17 +38,17 @@
   #define CALC_SQRT csqrt
   #define CALC_SQR csqr
   #define CALC_SIN csin
-  #define CALC_ASIN casin
+  #define CALC_ASIN cr_casin
   #define CALC_COS ccos
-  #define CALC_ACOS cacos
+  #define CALC_ACOS cr_cacos
   #define CALC_TAN ctan
-  #define CALC_ATAN catan
+  #define CALC_ATAN cr_catan
   #define CALC_SINH csinh
-  #define CALC_ASINH casinh
+  #define CALC_ASINH cr_casinh
   #define CALC_COSH ccosh
-  #define CALC_ACOSH cacosh
+  #define CALC_ACOSH cr_cacosh
   #define CALC_TANH ctanh
-  #define CALC_ATANH catanh
+  #define CALC_ATANH cr_catanh
   
   #define CALC_PLUS cplus
   #define CALC_TIMES ctimes

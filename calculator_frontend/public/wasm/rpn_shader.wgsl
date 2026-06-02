@@ -17,6 +17,7 @@ const N_UNARY: u32 = 18u;
 const N_BINARY: u32 = 5u;
 const STACK_SIZE: u32 = 16u;
 const MAX_K: u32 = 12u;
+const MAX_RESULTS: u32 = 16384u;
 
 // ============================================================================
 // UNIFORMS & BUFFERS
@@ -241,7 +242,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let write_index = atomicAdd(&global_counter.count, 1u);
         
         // Only write if we haven't exceeded buffer capacity
-        if (write_index < 1024u) {
+        if (write_index < MAX_RESULTS) {
             results[write_index].error = diff;
             results[write_index].idx = real_idx;
             results[write_index].valid = 1u;

@@ -9,6 +9,7 @@ const SQRT_TWO_PI: f32 = 2.50662827463100050242;
 
 const N_CONST: u32 = 14u;
 const STACK_SIZE: u32 = 16u;
+const MAX_RESULTS: u32 = 16384u;
 
 struct Params {
     search_target: vec2<f32>,
@@ -225,7 +226,12 @@ fn apply_unary(op: u32, x: vec2<f32>) -> vec2<f32> {
         case 0u: { return clog(x); }
         case 1u: { return cexp(x); }
         case 2u: { return cdiv(vec2<f32>(1.0, 0.0), x); }
-        case 3u: { return vec2<f32>(gamma_lanczos(x.x), 0.0); }
+        case 3u: {
+            if (abs(x.y) > 1e-6) {
+                return vec2<f32>(1e38, 1e38);
+            }
+            return vec2<f32>(gamma_lanczos(x.x), 0.0);
+        }
         case 4u: { return csqrt(x); }
         case 5u: { return cmul(x, x); }
         case 6u: { return csin(x); }
@@ -329,7 +335,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let diff = cabs(computed - params.search_target);
     if (diff < params.threshold) {
         let write_index = atomicAdd(&global_counter.count, 1u);
-        if (write_index < 1024u) {
+        if (write_index < MAX_RESULTS) {
             results[write_index].error = diff;
             results[write_index].idx = real_idx;
             results[write_index].valid = 1u;

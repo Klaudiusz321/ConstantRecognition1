@@ -135,6 +135,11 @@ static int ternary_increment(char* ternary, int K) {
 
 #ifdef USE_COMPLEX
 static inline calc_type clean_complex(calc_type z) {
+    /*
+     * Canonicalize signed zero created by arithmetic. Without this, a real
+     * subexpression like INV(2) can become 0.5-0i and select the lower side of
+     * a complex branch cut even though the calculator expression is real.
+     */
     double r = creal(z);
     double i = cimag(z);
     if (r == 0.0) r = 0.0;
@@ -285,6 +290,14 @@ static double compute_single_error(calc_type computed, calc_type target, ErrorMe
     }
 #endif
 }
+
+#ifdef USE_COMPLEX
+static unsigned int compute_complex_hamming_distance(calc_type target, calc_type computed) {
+    int real_distance = compute_hamming_distance(creal(target), creal(computed));
+    int imag_distance = compute_hamming_distance(cimag(target), cimag(computed));
+    return (unsigned int)((real_distance > imag_distance) ? real_distance : imag_distance);
+}
+#endif
 
 static int is_exact_match(double err, calc_type computed, calc_type target, double delta, int K, int n_total, double cr_threshold) {
     if (err <= EPS_MAX * DBL_EPSILON) return 1;
@@ -473,9 +486,9 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
                 char code[512];
                 format_code(ternary, indices, K, st->const_ops, st->unary_ops, st->binary_ops, MODE_CONSTANT, code, sizeof(code));
 #ifdef USE_COMPLEX
-                int hamming = compute_hamming_distance(creal(target), creal(computed));
+                unsigned int hamming = compute_complex_hamming_distance(target, computed);
 #else
-                int hamming = compute_hamming_distance(target, computed);
+                unsigned int hamming = (unsigned int)compute_hamming_distance(target, computed);
 #endif
                 
                 if (st->result_count > 0) {
@@ -483,17 +496,34 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
                     st->json_ptr += w;
                     st->json_remaining -= w;
                 }
+#ifdef USE_COMPLEX
                 int w = snprintf(st->json_ptr, st->json_remaining,
                     "{"
                     "\"K\":%d, "
-                    "\"REL_ERR\":%.5e, "
+                    "\"REL_ERR\":%.17g, "
                     "\"result\":\"INTERMEDIATE\", "
                     "\"status\":\"RUNNING\", "
                     "\"cpuId\":%d, "
-                    "\"HAMMING_DISTANCE\":%d, "
+                    "\"computed_real\":%.17g, "
+                    "\"computed_imag\":%.17g, "
+                    "\"HAMMING_DISTANCE\":%u, "
                     "\"RPN\":\"%s\""
                     "}",
-                    K, err, st->cpu_id, hamming, code);
+                    K, err, st->cpu_id, creal(computed), cimag(computed), hamming, code);
+#else
+                int w = snprintf(st->json_ptr, st->json_remaining,
+                    "{"
+                    "\"K\":%d, "
+                    "\"REL_ERR\":%.17g, "
+                    "\"result\":\"INTERMEDIATE\", "
+                    "\"status\":\"RUNNING\", "
+                    "\"cpuId\":%d, "
+                    "\"computed\":%.17g, "
+                    "\"HAMMING_DISTANCE\":%u, "
+                    "\"RPN\":\"%s\""
+                    "}",
+                    K, err, st->cpu_id, computed, hamming, code);
+#endif
                 st->json_ptr += w;
                 st->json_remaining -= w;
                 st->result_count++;
@@ -508,9 +538,9 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
                     char code[512];
                     format_code(ternary, indices, K, st->const_ops, st->unary_ops, st->binary_ops, MODE_CONSTANT, code, sizeof(code));
 #ifdef USE_COMPLEX
-                    int hamming = compute_hamming_distance(creal(target), creal(computed));
+                    unsigned int hamming = compute_complex_hamming_distance(target, computed);
 #else
-                    int hamming = compute_hamming_distance(target, computed);
+                    unsigned int hamming = (unsigned int)compute_hamming_distance(target, computed);
 #endif
                     
                     if (st->result_count > 0) {
@@ -518,6 +548,23 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
                         st->json_ptr += w;
                         st->json_remaining -= w;
                     }
+#ifdef USE_COMPLEX
+                    int w = snprintf(st->json_ptr, st->json_remaining,
+                        "{"
+                        "\"target_id\":%.0f, "
+                        "\"target\":%.17g, "
+                        "\"target_imag\":%.17g, "
+                        "\"K\":%d, "
+                        "\"REL_ERR\":%.17g, "
+                        "\"result\":\"SUCCESS\", "
+                        "\"computed_real\":%.17g, "
+                        "\"computed_imag\":%.17g, "
+                        "\"HAMMING_DISTANCE\":%u, "
+                        "\"RPN\":\"%s\""
+                        "}",
+                        creal(st->data[t].x), creal(target), cimag(target), K, err,
+                        creal(computed), cimag(computed), hamming, code);
+#else
                     int w = snprintf(st->json_ptr, st->json_remaining,
                         "{"
                         "\"target_id\":%.0f, "
@@ -525,13 +572,11 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
                         "\"K\":%d, "
                         "\"REL_ERR\":%.17g, "
                         "\"result\":\"SUCCESS\", "
+                        "\"computed\":%.17g, "
                         "\"HAMMING_DISTANCE\":%u, "
                         "\"RPN\":\"%s\""
                         "}",
-#ifdef USE_COMPLEX
-                        creal(st->data[t].x), creal(target), K, err, hamming, code);
-#else
-                        st->data[t].x, target, K, err, hamming, code);
+                        st->data[t].x, target, K, err, computed, hamming, code);
 #endif
                     st->json_ptr += w;
                     st->json_remaining -= w;
@@ -675,9 +720,9 @@ char* vsearch_core(
                     format_code(targets[i].best_ternary, targets[i].best_indices, targets[i].best_K,
                                const_ops, unary_ops, binary_ops, MODE_CONSTANT, code, sizeof(code));
 #ifdef USE_COMPLEX
-                    int hamming = compute_hamming_distance(creal(data[i].y), creal(targets[i].computed_value));
+                    unsigned int hamming = compute_complex_hamming_distance(data[i].y, targets[i].computed_value);
 #else
-                    int hamming = compute_hamming_distance(data[i].y, targets[i].computed_value);
+                    unsigned int hamming = (unsigned int)compute_hamming_distance(data[i].y, targets[i].computed_value);
 #endif
                     
                     if (st.result_count > 0) {
@@ -685,6 +730,7 @@ char* vsearch_core(
                         st.json_ptr += w;
                         st.json_remaining -= w;
                     }
+#ifdef USE_COMPLEX
                     w = snprintf(st.json_ptr, st.json_remaining,
                         "{"
                         "\"K\":%d, "
@@ -692,10 +738,28 @@ char* vsearch_core(
                         "\"result\":\"K_BEST\"      , "
                         "\"status\":\"RUNNING\", "
                         "\"cpuId\":%d, "
+                        "\"computed_real\":%.17g, "
+                        "\"computed_imag\":%.17g, "
                         "\"HAMMING_DISTANCE\":%u, "
                         "\"RPN\":\"%s\""
                         "}",
-                        K, targets[i].best_err, cpu_id, hamming, code);
+                        K, targets[i].best_err, cpu_id,
+                        creal(targets[i].computed_value), cimag(targets[i].computed_value),
+                        hamming, code);
+#else
+                    w = snprintf(st.json_ptr, st.json_remaining,
+                        "{"
+                        "\"K\":%d, "
+                        "\"REL_ERR\":%.17g, "
+                        "\"result\":\"K_BEST\"      , "
+                        "\"status\":\"RUNNING\", "
+                        "\"cpuId\":%d, "
+                        "\"computed\":%.17g, "
+                        "\"HAMMING_DISTANCE\":%u, "
+                        "\"RPN\":\"%s\""
+                        "}",
+                        K, targets[i].best_err, cpu_id, targets[i].computed_value, hamming, code);
+#endif
                     st.json_ptr += w;
                     st.json_remaining -= w;
                     st.result_count++;
@@ -734,9 +798,9 @@ char* vsearch_core(
                     char code[512];
                     format_code(targets[i].best_ternary, targets[i].best_indices, targets[i].best_K, const_ops, unary_ops, binary_ops, MODE_CONSTANT, code, sizeof(code));
 #ifdef USE_COMPLEX
-                    int hamming = compute_hamming_distance(creal(data[i].y), creal(targets[i].computed_value));
+                    unsigned int hamming = compute_complex_hamming_distance(data[i].y, targets[i].computed_value);
 #else
-                    int hamming = compute_hamming_distance(data[i].y, targets[i].computed_value);
+                    unsigned int hamming = (unsigned int)compute_hamming_distance(data[i].y, targets[i].computed_value);
 #endif
                     
                     if (st.result_count > 0) {
@@ -744,6 +808,25 @@ char* vsearch_core(
                         st.json_ptr += w;
                         st.json_remaining -= w;
                     }
+#ifdef USE_COMPLEX
+                    w = snprintf(st.json_ptr, st.json_remaining,
+                        "{"
+                        "\"target_id\":%.0f, "
+                        "\"target\":%.17g, "
+                        "\"target_imag\":%.17g, "
+                        "\"K\":%d, "
+                        "\"REL_ERR\":%.17g, "
+                        "\"result\":\"BEST\", "
+                        "\"computed_real\":%.17g, "
+                        "\"computed_imag\":%.17g, "
+                        "\"HAMMING_DISTANCE\":%u, "
+                        "\"RPN\":\"%s\""
+                        "}",
+                        creal(data[i].x), creal(data[i].y), cimag(data[i].y),
+                        targets[i].best_K, targets[i].best_err,
+                        creal(targets[i].computed_value), cimag(targets[i].computed_value),
+                        hamming, code);
+#else
                     w = snprintf(st.json_ptr, st.json_remaining,
                         "{"
                         "\"target_id\":%.0f, "
@@ -751,13 +834,12 @@ char* vsearch_core(
                         "\"K\":%d, "
                         "\"REL_ERR\":%.17g, "
                         "\"result\":\"BEST\", "
+                        "\"computed\":%.17g, "
                         "\"HAMMING_DISTANCE\":%u, "
                         "\"RPN\":\"%s\""
                         "}",
-#ifdef USE_COMPLEX
-                        creal(data[i].x), creal(data[i].y), targets[i].best_K, targets[i].best_err, hamming, code);
-#else
-                        data[i].x, data[i].y, targets[i].best_K, targets[i].best_err, hamming, code);
+                        data[i].x, data[i].y, targets[i].best_K, targets[i].best_err,
+                        targets[i].computed_value, hamming, code);
 #endif
                     st.json_ptr += w;
                     st.json_remaining -= w;
@@ -770,11 +852,11 @@ char* vsearch_core(
         char final_code[512];
         format_code(targets[0].best_ternary, targets[0].best_indices, targets[0].best_K,
                    const_ops, unary_ops, binary_ops, MODE_CONSTANT, final_code, sizeof(final_code));
-        int final_hamming =
+        unsigned int final_hamming =
 #ifdef USE_COMPLEX
-            compute_hamming_distance(creal(data[0].y), creal(targets[0].computed_value));
+            compute_complex_hamming_distance(data[0].y, targets[0].computed_value);
 #else
-            compute_hamming_distance(data[0].y, targets[0].computed_value);
+            (unsigned int)compute_hamming_distance(data[0].y, targets[0].computed_value);
 #endif
         ;
         
@@ -802,18 +884,36 @@ char* vsearch_core(
         }
         
         const char* result_type = (st.num_found == n_data) ? "SUCCESS" : ((st.num_found > 0) ? "PARTIAL" : "FAILURE");
+#ifdef USE_COMPLEX
         w = snprintf(st.json_ptr, st.json_remaining,
             "],\n \"result\":\"%s\", \"RPN\":\"%s\", \"REL_ERR\":%.17e, "
+            "\"computed_real\":%.17g, \"computed_imag\":%.17g, "
             "\"INPUT_ABS_ERR\":%lf, \"COMPRESSION_RATIO\":%lf, \"K\":%d, "
             "\"status\":\"FINISHED\", \"hamming\":%u, "
             "\"num_found\":%d, \"num_not_found\":%d, "
             "\"total_ternary\":%llu, \"valid_ternary\":%llu, \"evaluations\":%llu}",
             result_type, final_code, targets[0].best_err,
+            creal(targets[0].computed_value), cimag(targets[0].computed_value),
             delta_val, compression, targets[0].best_K,
             final_hamming, st.num_found, not_found,
             (unsigned long long)st.total_ternary,
             (unsigned long long)st.valid_ternary,
             (unsigned long long)st.evaluations);
+#else
+        w = snprintf(st.json_ptr, st.json_remaining,
+            "],\n \"result\":\"%s\", \"RPN\":\"%s\", \"REL_ERR\":%.17e, "
+            "\"computed\":%.17g, "
+            "\"INPUT_ABS_ERR\":%lf, \"COMPRESSION_RATIO\":%lf, \"K\":%d, "
+            "\"status\":\"FINISHED\", \"hamming\":%u, "
+            "\"num_found\":%d, \"num_not_found\":%d, "
+            "\"total_ternary\":%llu, \"valid_ternary\":%llu, \"evaluations\":%llu}",
+            result_type, final_code, targets[0].best_err,
+            targets[0].computed_value, delta_val, compression, targets[0].best_K,
+            final_hamming, st.num_found, not_found,
+            (unsigned long long)st.total_ternary,
+            (unsigned long long)st.valid_ternary,
+            (unsigned long long)st.evaluations);
+#endif
         free(targets);
     }
     

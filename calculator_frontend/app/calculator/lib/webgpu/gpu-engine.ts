@@ -32,6 +32,12 @@ const complexDistance = (a: ComplexNumber, b: ComplexNumber) =>
 
 const finiteComplex = (z: ComplexNumber) => Number.isFinite(z.real) && Number.isFinite(z.imag);
 
+const fp32CandidateGuard = (domain: SearchDomain, magnitude: number) =>
+  (domain === 'complex' ? 2e-5 : 1e-5) * magnitude;
+
+const fp64AcceptanceGuard = (domain: SearchDomain, magnitude: number) =>
+  (domain === 'complex' ? 64 : 32) * Number.EPSILON * magnitude;
+
 export class ConstantRecognitionGPU {
   private device: GPUDevice | null = null;
   private pipelines: Partial<Record<SearchDomain, GPUComputePipeline>> = {};
@@ -105,9 +111,14 @@ export class ConstantRecognitionGPU {
 
     console.log('[GPU] Search params - target:', target, 'domain:', domain, 'minK:', minK, 'maxK:', maxK);
 
-    const relativeThreshold = domain === 'complex' ? 2e-4 : 1e-4;
     const magnitude = Math.max(targetMagnitude(target), 1.0);
-    const threshold = relativeThreshold * magnitude;
+    const rawTolerance = options.absoluteTolerance;
+    const requestedTolerance =
+      rawTolerance !== undefined && Number.isFinite(rawTolerance) && rawTolerance > 0
+        ? rawTolerance
+        : 0;
+    const candidateThreshold = Math.max(requestedTolerance, fp32CandidateGuard(domain, magnitude));
+    const acceptanceThreshold = Math.max(requestedTolerance, fp64AcceptanceGuard(domain, magnitude));
 
     const allCandidates: Candidate[] = [];
     let totalEvaluated = 0;
@@ -120,7 +131,7 @@ export class ConstantRecognitionGPU {
       }
 
       for (const form of forms) {
-        const candidates = await this.evaluateForm(target, threshold, K, form, pipeline, domain);
+        const candidates = await this.evaluateForm(target, candidateThreshold, K, form, pipeline, domain);
         totalEvaluated += form.totalCombinations;
 
         for (const c of candidates) {
@@ -160,7 +171,7 @@ export class ConstantRecognitionGPU {
         K: c.K,
         REL_ERR: fp64Error / magnitude,
         error: fp64Error,
-        status: i === 0 && fp64Error <= threshold ? 'SUCCESS' : 'GPU_VERIFIED',
+        status: i === 0 && fp64Error <= acceptanceThreshold ? 'SUCCESS' : 'GPU_VERIFIED',
         cpuId: 1,
         domain,
       };
@@ -291,7 +302,7 @@ export class ConstantRecognitionGPU {
     }
 
     const { ternary, radix } = form;
-    const MAX_RESULTS = 1024;
+    const MAX_RESULTS = 16384;
 
     let paramsBuffer: GPUBuffer | null = null;
     let ternaryBuffer: GPUBuffer | null = null;

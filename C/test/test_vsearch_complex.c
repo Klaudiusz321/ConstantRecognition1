@@ -73,13 +73,75 @@ int test_complex_i_power_i(void) {
     return passed;
 }
 
+int test_complex_positive_imaginary_branch(void) {
+    printf("Running test_complex_positive_imaginary_branch... ");
+
+    double complex target = 0.0 + (sqrt(3.0) / 2.0) * I;
+
+    char* result = search_constant(
+        target, 0.0,
+        1, 4,
+        0, 1,
+        CALC4_CONSTS, CALC4_N_CONST,
+        CALC4_FUNCS,  CALC4_N_UNARY,
+        CALC4_OPS,    CALC4_N_BINARY,
+        ERROR_REL,
+        COMPARE_STRICT);
+
+    int passed = 0;
+    if (strstr(result, "\"SUCCESS\"") != NULL &&
+        strstr(result, "\"RPN\":\"TWO, INV, ARCCOSH, SINH\"") != NULL &&
+        strstr(result, "\"computed_imag\"") != NULL) {
+        passed = 1;
+        printf("[PASS]\n");
+    } else {
+        printf("[FAIL]\n");
+        printf("Output: %s\n", result);
+    }
+
+    free(result);
+    return passed;
+}
+
+int test_complex_negative_imaginary_branch(void) {
+    printf("Running test_complex_negative_imaginary_branch... ");
+
+    double complex target = 0.0 - (sqrt(3.0) / 2.0) * I;
+
+    char* result = search_constant(
+        target, 0.0,
+        1, 3,
+        0, 1,
+        CALC4_CONSTS, CALC4_N_CONST,
+        CALC4_FUNCS,  CALC4_N_UNARY,
+        CALC4_OPS,    CALC4_N_BINARY,
+        ERROR_REL,
+        COMPARE_STRICT);
+
+    int passed = 0;
+    if (strstr(result, "\"SUCCESS\"") != NULL &&
+        strstr(result, "\"RPN\":\"TWO, ARCCOS, TAN\"") != NULL &&
+        strstr(result, "\"computed_imag\"") != NULL) {
+        passed = 1;
+        printf("[PASS]\n");
+    } else {
+        printf("[FAIL]\n");
+        printf("Output: %s\n", result);
+    }
+
+    free(result);
+    return passed;
+}
+
 int main() {
     printf("=== Backend Complex Search Tests ===\n");
     int passed = 0;
-    int total = 2;
+    int total = 4;
     
     passed += test_complex_euler();
     passed += test_complex_i_power_i();
+    passed += test_complex_positive_imaginary_branch();
+    passed += test_complex_negative_imaginary_branch();
     
     printf("=====================================\n");
     printf("Results: %d/%d passed\n", passed, total);

@@ -92,6 +92,45 @@ const trimFormattedNumber = (value: number, digits: number) => {
   return exponent === undefined ? trimmed : `${trimmed}e${exponent}`;
 };
 
+const NUMBER_PATTERN = String.raw`[+-]?(?:(?:\d+\.?\d*)|(?:\.\d+))(?:e[+-]?\d+)?`;
+const SIGNED_NUMBER_PATTERN = String.raw`[+-](?:(?:\d+\.?\d*)|(?:\.\d+))(?:e[+-]?\d+)?`;
+
+const numericLiteralUncertainty = (raw: string) => {
+  const normalized = raw.replace(/^\+/u, '');
+  const [mantissa, exponentPart] = normalized.split(/e/i);
+  const exponent = exponentPart === undefined ? 0 : Number.parseInt(exponentPart, 10);
+  const unsignedMantissa = mantissa.replace(/^[+-]/u, '');
+  const decimalIndex = unsignedMantissa.indexOf('.');
+
+  if (decimalIndex === -1) {
+    return 0.5 * Math.pow(10, exponent);
+  }
+
+  const fractionalDigits = unsignedMantissa.length - decimalIndex - 1;
+  return 0.5 * Math.pow(10, exponent - fractionalDigits);
+};
+
+const simpleComplexLiteralUncertainty = (normalized: string) => {
+  const realOnly = new RegExp(`^(${NUMBER_PATTERN})$`, 'u').exec(normalized);
+  if (realOnly) return numericLiteralUncertainty(realOnly[1]);
+
+  const pureImag = new RegExp(`^(${NUMBER_PATTERN})i$`, 'u').exec(normalized);
+  if (pureImag) return numericLiteralUncertainty(pureImag[1]);
+
+  const complex = new RegExp(`^(${NUMBER_PATTERN})(${SIGNED_NUMBER_PATTERN})i$`, 'u').exec(normalized);
+  if (complex) {
+    return Math.hypot(
+      numericLiteralUncertainty(complex[1]),
+      numericLiteralUncertainty(complex[2]),
+    );
+  }
+
+  const unitImag = new RegExp(`^(${NUMBER_PATTERN})([+-])i$`, 'u').exec(normalized);
+  if (unitImag) return numericLiteralUncertainty(unitImag[1]);
+
+  return null;
+};
+
 class ComplexExpressionParser {
   private readonly text: string;
   private pos = 0;
@@ -314,30 +353,18 @@ export function extractInputPrecision(inputString: string): Precision {
   const z = inputString;
   const normalized = normalizeMathInput(inputString);
 
-  if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(normalized)) {
+  const literalUncertainty = simpleComplexLiteralUncertainty(normalized);
+  if (literalUncertainty === null) {
     return { z, deltaZ: '0', relDeltaZ: '0' };
-  }
-
-  const parts = normalized.split(/e/i);
-  const mainPart = parts[0];
-  const exponent = parts.length > 1 ? parseInt(parts[1], 10) : 0;
-  const decimalIndex = mainPart.indexOf('.');
-  let deltaZ: number;
-
-  if (decimalIndex === -1) {
-    deltaZ = 0.5 * Math.pow(10, exponent);
-  } else {
-    const fractionalPart = mainPart.slice(decimalIndex + 1);
-    deltaZ = 0.5 * Math.pow(10, -fractionalPart.length + exponent);
   }
 
   const parsed = parseSearchInput(inputString);
   const magnitude = Math.hypot(parsed.real, parsed.imag);
-  const relDeltaZ = magnitude !== 0 ? deltaZ / magnitude : 0;
+  const relDeltaZ = magnitude !== 0 ? literalUncertainty / magnitude : 0;
 
   return {
     z,
-    deltaZ: deltaZ.toExponential(2),
+    deltaZ: literalUncertainty.toExponential(2),
     relDeltaZ: relDeltaZ.toExponential(2),
   };
 }

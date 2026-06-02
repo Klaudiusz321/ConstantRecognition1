@@ -50,6 +50,7 @@ export default function CalculatorPage() {
   const [domain, setDomain] = useState<Domain>('real');
   const [calculatorMode, setCalculatorMode] = useState<CalculatorMode>('standard');
   const [inputError, setInputError] = useState<string | null>(null);
+  const [backendNotice, setBackendNotice] = useState<string | null>(null);
   const [customCalculatorSpec, setCustomCalculatorSpec] = useState<SearchCalculatorSpec | null>(null);
   
   const workersRef = useRef<Worker[]>([]);
@@ -100,6 +101,26 @@ export default function CalculatorPage() {
       return Math.max(0, numerator / r.K / Math.log10(36));
     }
     return 0;
+  };
+
+  const getDisplayValue = (r: {
+    RPN: string;
+    computed?: number;
+    computed_real?: number;
+    computed_imag?: number;
+  }) => {
+    if (domain === 'complex') {
+      const real = Number(r.computed_real);
+      const imag = Number(r.computed_imag);
+      if (Number.isFinite(real) && Number.isFinite(imag)) {
+        return formatComplexValue({ real, imag });
+      }
+    } else if (r.computed !== undefined) {
+      const computed = Number(r.computed);
+      if (Number.isFinite(computed)) return computed.toString();
+    }
+
+    return evaluateRPNDisplay(r.RPN, domain);
   };
   
   // Best result = MAXIMUM Compression Ratio (CR) - this is the correct identification criterion
@@ -169,11 +190,11 @@ export default function CalculatorPage() {
     // Worker completed with results array (new WASM uses 'candidates', old uses 'results')
     const candidatesArray = data.candidates || data.results;
     if (candidatesArray && Array.isArray(candidatesArray)) {
-      candidatesArray.forEach((r: { K: number; RPN: string; result: string; REL_ERR: number; status?: string; cpuId?: number; COMPRESSION_RATIO?: number }) => {
+      candidatesArray.forEach((r: { K: number; RPN: string; result: string; REL_ERR: number; status?: string; cpuId?: number; COMPRESSION_RATIO?: number; computed?: number; computed_real?: number; computed_imag?: number }) => {
         // Calculate numeric value from RPN
         let numericValue: string;
         try {
-          numericValue = evaluateRPNDisplay(r.RPN, domain);
+          numericValue = getDisplayValue(r);
         } catch {
           numericValue = 'N/A';
         }
@@ -194,7 +215,7 @@ export default function CalculatorPage() {
       if (data.result && data.RPN) {
         let numericValue: string;
         try {
-          numericValue = evaluateRPNDisplay(data.RPN, domain);
+          numericValue = getDisplayValue(data);
         } catch {
           numericValue = 'N/A';
         }
@@ -242,6 +263,7 @@ export default function CalculatorPage() {
     if (!inputValue.trim()) return;
 
     setInputError(null);
+    setBackendNotice(null);
 
     const firstInputValue = inputValue.split(/[;,\n:]/)[0]?.trim() || inputValue.trim();
     const targetInputForPrecision = recognitionTarget === 'constant' ? inputValue.trim() : firstInputValue;
@@ -319,6 +341,7 @@ export default function CalculatorPage() {
         const gpuResults = await searchGPU(gpuTarget, {
           minK: 1,
           maxK: searchDepth,
+          absoluteTolerance: deltaZNum,
           domain
         });
 
@@ -355,6 +378,7 @@ export default function CalculatorPage() {
         return;
       } catch (err) {
         console.warn('GPU search failed, falling back to CPU/WASM:', err);
+        setBackendNotice('GPU search failed; using CPU/WASM fallback.');
       }
     }
 
@@ -467,6 +491,7 @@ export default function CalculatorPage() {
     setSearchFinished(false);
     setElapsedTime(0);
     setInputError(null);
+    setBackendNotice(null);
   };
 
   const handleExampleClick = (value: string) => {
@@ -541,6 +566,12 @@ export default function CalculatorPage() {
             {precision.deltaZ && (
               <span className="text-sm opacity-75">(±{precision.deltaZ})</span>
             )}
+          </div>
+        )}
+
+        {backendNotice && (
+          <div className="bg-amber-500 text-white py-2 px-4 text-center text-sm">
+            {backendNotice}
           </div>
         )}
 

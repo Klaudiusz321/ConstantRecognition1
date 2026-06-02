@@ -17,6 +17,10 @@
 #include <math.h>
 #include <complex.h>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 /* ============================================================================
  * BINARY OPERATION HELPERS
  * 
@@ -161,6 +165,33 @@ static inline complex long double clnl(complex long double x, complex long doubl
 static inline complex float       cemlf(complex float x, complex float y)             { return cexpf(x) - clogf(y); }
 static inline complex double      ceml(complex double x, complex double y)            { return cexp(x) - clog(y); }
 static inline complex long double cemll(complex long double x, complex long double y) { return cexpl(x) - clogl(y); }
+
+/* Complex inverse functions with branch choices matched to the JS/WGSL
+ * frontend evaluators. This avoids platform-specific libm differences for
+ * real arguments on branch cuts, especially acosh(1/2) on Windows/MinGW. */
+static inline complex double cr_casin(complex double z) {
+    return -I * clog(I * z + csqrt(1.0 - z * z));
+}
+
+static inline complex double cr_cacos(complex double z) {
+    return (M_PI / 2.0) - cr_casin(z);
+}
+
+static inline complex double cr_catan(complex double z) {
+    return 0.5 * I * clog((I + z) / (I - z));
+}
+
+static inline complex double cr_casinh(complex double z) {
+    return clog(z + csqrt(z * z + 1.0));
+}
+
+static inline complex double cr_cacosh(complex double z) {
+    return clog(z + csqrt(z - 1.0) * csqrt(z + 1.0));
+}
+
+static inline complex double cr_catanh(complex double z) {
+    return 0.5 * (clog(1.0 + z) - clog(1.0 - z));
+}
 
 /* Complex Gamma: approximate (real part only) */
 static inline complex float       ctgammaf(complex float x)       { return tgammaf(crealf(x)) + 0.0f * I; }

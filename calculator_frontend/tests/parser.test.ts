@@ -107,6 +107,12 @@ describe('Frontend Input Parsing Logic', () => {
       expect(precision.deltaZ).toBe('0');
       expect(precision.relDeltaZ).toBe('0');
     });
+
+    it('extracts precision from pure imaginary decimal targets', () => {
+      const precision = extractInputPrecision('0.86602540378443864676372317075294i');
+      expect(precision.deltaZ).toBe('5.00e-33');
+      expect(Number(precision.relDeltaZ)).toBeGreaterThan(0);
+    });
   });
 
   describe('Complex RPN display', () => {
@@ -122,6 +128,13 @@ describe('Frontend Input Parsing Logic', () => {
       expect(result.real).toBeCloseTo(0, 15);
       expect(result.imag).toBeCloseTo(-Math.sqrt(3) / 2, 15);
       expect(evaluateRPNDisplay('TWO, ARCCOS, TAN', 'complex')).toMatch(/^-0\.866025403784438[56]i$/);
+    });
+
+    it('keeps the positive branch for sinh(arccosh(1/2))', () => {
+      const result = evaluateRPNComplex('TWO, INV, ARCCOSH, SINH');
+      expect(result.real).toBeCloseTo(0, 15);
+      expect(result.imag).toBeCloseTo(Math.sqrt(3) / 2, 15);
+      expect(evaluateRPNDisplay('TWO, INV, ARCCOSH, SINH', 'complex')).toMatch(/^0\.866025403784438[56]i$/);
     });
   });
 
