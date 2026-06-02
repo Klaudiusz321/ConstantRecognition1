@@ -177,6 +177,16 @@ export default function CalculatorPage() {
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
 
+  useEffect(() => {
+    document.documentElement.classList.add('calculator-viewport');
+    document.body.classList.add('calculator-viewport');
+
+    return () => {
+      document.documentElement.classList.remove('calculator-viewport');
+      document.body.classList.remove('calculator-viewport');
+    };
+  }, []);
+
 
   const handleWorkerMessage = (cpuId: number, e: MessageEvent, onComplete?: () => void) => {
     const data = e.data;
@@ -499,7 +509,7 @@ export default function CalculatorPage() {
   };
 
   return (
-    <div className="flex h-screen w-screen bg-gray-50 dark:bg-[#1a1a1d] overflow-hidden">
+    <div className="fixed inset-0 flex h-dvh w-dvw overflow-hidden bg-gray-50 dark:bg-[#1a1a1d]">
       {/* Sidebar */}
       <Sidebar
         wasmLoaded={wasmLoaded}
@@ -541,7 +551,7 @@ export default function CalculatorPage() {
       />
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main className="min-w-0 flex-1 flex flex-col overflow-hidden bg-white dark:bg-[#1a1a1d]">
         <InputBar
           inputValue={inputValue}
           setInputValue={setInputValue}
