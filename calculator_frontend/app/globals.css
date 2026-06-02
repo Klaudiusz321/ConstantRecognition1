@@ -45,11 +45,9 @@ nextjs-portal {
 /* Prevent KaTeX output from expanding page width. */
 .katex {
   max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
 }
 
 .katex-display {
   max-width: 100%;
-  overflow-x: auto;
+  margin: 0;
 }

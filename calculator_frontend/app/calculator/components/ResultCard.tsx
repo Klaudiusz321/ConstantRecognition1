@@ -74,7 +74,7 @@ export function ResultCard({ result, allResults = [], crThreshold }: ResultCardP
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-5">
           <div className="col-span-1 sm:col-span-2 lg:col-span-1 overflow-hidden">
             <label className="text-[10px] sm:text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">Best Match</label>
-            <div className="text-lg sm:text-xl text-gray-900 dark:text-white mt-1 overflow-x-auto">
+            <div className="mt-1 max-w-full overflow-hidden text-lg sm:text-xl leading-relaxed text-gray-900 dark:text-white">
               <Latex formula={rpnToLatex(result.RPN)} />
             </div>
           </div>

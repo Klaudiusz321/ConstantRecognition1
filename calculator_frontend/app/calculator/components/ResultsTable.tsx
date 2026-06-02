@@ -310,15 +310,15 @@ export function ResultsTable({
               >
                 <td className="p-3 font-mono text-gray-500 dark:text-gray-500">{r.cpuId}</td>
                 <td className="p-3 font-mono font-medium text-gray-900 dark:text-white">{r.K}</td>
-                <td className="p-3">
-                  <a 
+                <td className="p-3 min-w-0 overflow-hidden">
+                  <a
                     href={createWolframLink(rpnToMathematica(r.RPN))}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-gray-900 dark:text-white hover:text-[#0066cc]"
+                    className="block max-w-full overflow-hidden text-gray-900 dark:text-white hover:text-[#0066cc]"
                     title="Open in Wolfram Alpha"
                   >
-                    <Latex formula={rpnToLatex(r.RPN)} />
+                    <Latex formula={rpnToLatex(r.RPN)} className="overflow-hidden" />
                   </a>
                 </td>
                 <td className="p-3 font-mono text-xs text-gray-600 dark:text-gray-400 truncate" title={r.result}>

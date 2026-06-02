@@ -9,23 +9,35 @@ interface LatexProps {
 }
 
 export function Latex({ formula, className = '' }: LatexProps) {
-  const html = useMemo(() => {
+  const rendered = useMemo(() => {
     try {
-      return katex.renderToString(formula, {
-        throwOnError: false,
-        displayMode: false,
-        trust: true,
-        strict: false,
-      });
+      return {
+        html: katex.renderToString(formula, {
+          throwOnError: false,
+          displayMode: false,
+          trust: true,
+          strict: false,
+        }),
+        isHtml: true,
+      };
     } catch {
-      return formula;
+      return { html: formula, isHtml: false };
     }
   }, [formula]);
 
+  const rootClassName = [
+    'inline-block max-w-full align-middle leading-normal',
+    className,
+  ].filter(Boolean).join(' ');
+
+  if (!rendered.isHtml) {
+    return <span className={rootClassName}>{rendered.html}</span>;
+  }
+
   return (
     <span 
-      className={className}
-      dangerouslySetInnerHTML={{ __html: html }} 
+      className={rootClassName}
+      dangerouslySetInnerHTML={{ __html: rendered.html }}
     />
   );
 }
