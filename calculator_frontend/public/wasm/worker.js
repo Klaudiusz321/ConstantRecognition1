@@ -169,39 +169,87 @@ function doWork(initDelay, z, targetValue, inputValue, recognitionTarget, calcul
                         }
                     }
                 } else if (recognitionTarget === 'multiple') {
+                    const rawValues = inputValue.split(/[,;\n]/).map(v => v.trim()).filter(Boolean);
                     let values = [];
                     if (domain === 'complex') {
-                        values = inputValue.split(/[,;\n]/).map(v => v.trim()).filter(Boolean).map(parseComplexInput);
+                        values = rawValues.map(parseComplexInput);
                     } else {
-                        values = inputValue.split(/[,;\n]/).map(v => parseRealToken(v.trim())).filter(v => !isNaN(v));
+                        values = rawValues.map(v => parseRealToken(v)).filter(v => !isNaN(v));
                     }
                     
                     if (values.length > 0) {
-                        if (domain === 'complex') {
-                            const xr_arr = values.map((_, index) => index);
-                            const xi_arr = new Array(values.length).fill(0);
-                            const yr_arr = values.map(v => v.r);
-                            const yi_arr = values.map(v => v.i);
-                            const xr_ptr = allocateDoubleArray(xr_arr); const xi_ptr = allocateDoubleArray(xi_arr);
-                            const yr_ptr = allocateDoubleArray(yr_arr); const yi_ptr = allocateDoubleArray(yi_arr);
-                            const result = Module.ccall('search_batch_wasm', 'string',
-                                ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number'],
-                                [xr_ptr, xi_ptr, yr_ptr, yi_ptr, 0, values.length, MinCodeLength, MaxCodeLength, cpuId, ncpus]);
-                            Module._free(xr_ptr); Module._free(xi_ptr); Module._free(yr_ptr); Module._free(yi_ptr);
-                            resolve(JSON.parse(result));
-                            return;
-                        } else {
-                            const x_arr = values.map((_, index) => index);
-                            const x_ptr = allocateDoubleArray(x_arr);
-                            const y_ptr = allocateDoubleArray(values);
-                            const result = Module.ccall('search_batch_wasm', 'string',
-                                ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number'],
-                                [x_ptr, y_ptr, 0, values.length, MinCodeLength, MaxCodeLength, cpuId, ncpus]);
-                            Module._free(x_ptr);
-                            Module._free(y_ptr);
-                            resolve(JSON.parse(result));
-                            return;
+                        const candidates = [];
+                        let numFound = 0;
+                        const constList = (calculatorSpec?.consts || []).join(',');
+                        const funcList = (calculatorSpec?.funcs || []).join(',');
+                        const opList = (calculatorSpec?.ops || []).join(',');
+
+                        for (let targetIndex = 0; targetIndex < values.length; targetIndex++) {
+                            const value = values[targetIndex];
+                            let resultString;
+
+                            if (calculatorMode === 'list' || calculatorMode === 'custom' || calculatorMode === 'fire_everything') {
+                                if (domain === 'complex') {
+                                    resultString = Module.ccall('search_RPN_custom', 'string',
+                                        ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'string', 'string', 'string'],
+                                        [value.r, value.i, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, constList, funcList, opList]);
+                                } else {
+                                    resultString = Module.ccall('search_RPN_custom', 'string',
+                                        ['number', 'number', 'number', 'number', 'number', 'number', 'string', 'string', 'string'],
+                                        [value, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, constList, funcList, opList]);
+                                }
+                            } else if (domain === 'complex') {
+                                if (typeof Module._search_RPN_with_cr === 'function') {
+                                    resultString = Module.ccall('search_RPN_with_cr', 'string',
+                                        ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number'],
+                                        [value.r, value.i, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, earlyExitCRThreshold]);
+                                } else {
+                                    resultString = Module.ccall('search_RPN', 'string',
+                                        ['number', 'number', 'number', 'number', 'number', 'number', 'number'],
+                                        [value.r, value.i, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus]);
+                                }
+                            } else if (typeof Module._search_RPN_with_cr === 'function') {
+                                resultString = Module.ccall('search_RPN_with_cr', 'string',
+                                    ['number', 'number', 'number', 'number', 'number', 'number', 'number'],
+                                    [value, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, earlyExitCRThreshold]);
+                            } else {
+                                resultString = Module.ccall('search_RPN', 'string',
+                                    ['number', 'number', 'number', 'number', 'number', 'number'],
+                                    [value, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus]);
+                            }
+
+                            const result = JSON.parse(resultString);
+                            if (result.result === 'SUCCESS') numFound++;
+
+                            const targetMeta = domain === 'complex'
+                                ? { target: value.r, target_imag: value.i }
+                                : { target: value };
+
+                            candidates.push({
+                                target_id: targetIndex,
+                                target_label: rawValues[targetIndex] || `#${targetIndex + 1}`,
+                                ...targetMeta,
+                                K: result.K,
+                                RPN: result.RPN,
+                                REL_ERR: result.REL_ERR,
+                                result: result.result,
+                                status: result.status,
+                                computed: result.computed,
+                                computed_real: result.computed_real,
+                                computed_imag: result.computed_imag,
+                                COMPRESSION_RATIO: result.COMPRESSION_RATIO
+                            });
                         }
+
+                        resolve({
+                            mode: 'BATCH',
+                            result: numFound === values.length ? 'SUCCESS' : (numFound > 0 ? 'PARTIAL' : 'FAILURE'),
+                            n_data: values.length,
+                            num_found: numFound,
+                            num_not_found: values.length - numFound,
+                            candidates
+                        });
+                        return;
                     }
                 }
                 

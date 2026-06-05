@@ -134,9 +134,11 @@ export default function CalculatorPage() {
     target_id?: number;
     target?: number;
     target_imag?: number;
+    target_label?: string;
     targetLabel?: string;
     targetIndex?: number;
   }) => {
+    if (r.target_label) return r.target_label;
     if (r.targetLabel) return r.targetLabel;
 
     if (typeof r.target === 'number' && Number.isFinite(r.target)) {
@@ -228,7 +230,14 @@ export default function CalculatorPage() {
     // Worker completed with results array (new WASM uses 'candidates', old uses 'results')
     const candidatesArray = data.candidates || data.results;
     if (candidatesArray && Array.isArray(candidatesArray)) {
-      candidatesArray.forEach((r: { K: number; RPN: string; result: string; REL_ERR: number; status?: string; cpuId?: number; COMPRESSION_RATIO?: number; computed?: number; computed_real?: number; computed_imag?: number; target_id?: number; target?: number; target_imag?: number }) => {
+      candidatesArray.forEach((r: { K: number; RPN: string; result: string; REL_ERR: number; status?: string; cpuId?: number; COMPRESSION_RATIO?: number; computed?: number; computed_real?: number; computed_imag?: number; target_id?: number; target?: number; target_imag?: number; target_label?: string }) => {
+        if (
+          recognitionTarget === 'multiple' &&
+          (r.result === 'INTERMEDIATE' || r.result === 'K_BEST' || r.status === 'RUNNING')
+        ) {
+          return;
+        }
+
         // Calculate numeric value from RPN
         let numericValue: string;
         try {
@@ -252,7 +261,7 @@ export default function CalculatorPage() {
       });
       
       // Handle final result (SUCCESS/FAILURE/ABORTED) from top-level data
-      if (data.result && data.RPN) {
+      if (data.result && data.RPN && recognitionTarget !== 'multiple') {
         let numericValue: string;
         try {
           numericValue = getDisplayValue(data);
@@ -278,7 +287,7 @@ export default function CalculatorPage() {
         setResults(prev => [...prev, ...newResults]);
       }
       
-      const isSuccess = data.result === 'SUCCESS';
+      const isSuccess = data.result === 'SUCCESS' && recognitionTarget !== 'multiple';
       if (isSuccess && !searchEndedRef.current) {
         searchEndedRef.current = true;
         workersRef.current.forEach(w => w.terminate());
