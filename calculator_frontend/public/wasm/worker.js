@@ -107,16 +107,36 @@ function parseComplexInput(value) {
     return { r: isNaN(r) ? 0 : r, i: 0 };
 }
 
-function doWork(initDelay, z, targetValue, inputValue, recognitionTarget, calculatorMode, calculatorSpec, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, earlyExitCRThreshold, domain) {
+function toWorkerComplex(value) {
+    if (!value || typeof value !== 'object') return null;
+    const real = Number(value.real ?? value.r);
+    const imag = Number(value.imag ?? value.i ?? 0);
+    if (!Number.isFinite(real) || !Number.isFinite(imag)) return null;
+    return { r: real, i: imag };
+}
+
+function doWork(initDelay, z, targetValue, inputValue, constantTargets, functionPoints, recognitionTarget, calculatorMode, calculatorSpec, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, earlyExitCRThreshold, domain) {
     return new Promise(resolve => {
         setTimeout(() => {
             try {
                 if (recognitionTarget === 'function' || recognitionTarget === 'sequence') {
-                    const pairs = inputValue.split(/[\n;]/).map(p => p.trim()).filter(p => p);
                     const x_real = []; const x_imag = [];
                     const y_real = []; const y_imag = [];
+                    const parsedPoints = Array.isArray(functionPoints) ? functionPoints : [];
 
-                    if (recognitionTarget === 'sequence') {
+                    if (parsedPoints.length > 0) {
+                        parsedPoints.forEach(point => {
+                            const x = toWorkerComplex(point.x);
+                            const y = toWorkerComplex(point.y);
+                            if (!x || !y) return;
+                            x_real.push(x.r);
+                            y_real.push(y.r);
+                            if (domain === 'complex') {
+                                x_imag.push(x.i);
+                                y_imag.push(y.i);
+                            }
+                        });
+                    } else if (recognitionTarget === 'sequence') {
                         const values = inputValue.split(/[,;\n]/).map(v => v.trim()).filter(Boolean);
                         values.forEach((value, index) => {
                             x_real.push(index + 1);
@@ -129,6 +149,7 @@ function doWork(initDelay, z, targetValue, inputValue, recognitionTarget, calcul
                             }
                         });
                     } else {
+                        const pairs = inputValue.split(/[\n;]/).map(p => p.trim()).filter(p => p);
                         pairs.forEach(p => {
                             const separator = p.includes(':') ? ':' : ',';
                             const parts = p.split(separator);
@@ -171,7 +192,15 @@ function doWork(initDelay, z, targetValue, inputValue, recognitionTarget, calcul
                 } else if (recognitionTarget === 'multiple') {
                     const rawValues = inputValue.split(/[,;\n]/).map(v => v.trim()).filter(Boolean);
                     let values = [];
-                    if (domain === 'complex') {
+                    const parsedTargets = Array.isArray(constantTargets)
+                        ? constantTargets.map(toWorkerComplex).filter(Boolean)
+                        : [];
+
+                    if (parsedTargets.length > 0) {
+                        values = domain === 'complex'
+                            ? parsedTargets
+                            : parsedTargets.map(value => value.r).filter(value => !isNaN(value));
+                    } else if (domain === 'complex') {
                         values = rawValues.map(parseComplexInput);
                     } else {
                         values = rawValues.map(v => parseRealToken(v)).filter(v => !isNaN(v));
@@ -326,6 +355,8 @@ onmessage = async function(e) {
         z,
         targetValue,
         inputValue,
+        constantTargets = [],
+        functionPoints = [],
         recognitionTarget,
         calculatorMode,
         calculatorSpec,
@@ -342,7 +373,7 @@ onmessage = async function(e) {
     
     console.log(`Worker ${cpuId} of ${ncpus} starting work for z=${z}, Target=${recognitionTarget}, Mode=${calculatorMode}, Domain=${domain}`);
     
-    const resultJSON = await doWork(initDelay, z, targetValue, inputValue, recognitionTarget, calculatorMode, calculatorSpec, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, earlyExitCRThreshold, domain);
+    const resultJSON = await doWork(initDelay, z, targetValue, inputValue, constantTargets, functionPoints, recognitionTarget, calculatorMode, calculatorSpec, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus, earlyExitCRThreshold, domain);
     
     console.log(`Worker ${cpuId} finished work with result:`, resultJSON);
     

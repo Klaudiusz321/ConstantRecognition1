@@ -4,9 +4,10 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { SearchResult, Filters, Precision, ActiveWorker, defaultFilters, ErrorMode, ComputeMode, RecognitionTarget, Domain, CalculatorMode, SearchCalculatorSpec } from './lib/types';
 import { CalculatorId, DEFAULT_CALCULATOR_ID, getCalculatorById } from './lib/calculators';
 import { evaluateRPNDisplay } from './lib/rpn';
-import { formatComplexValue, resolveInputUncertainty } from './lib/input';
+import { resolveInputUncertainty } from './lib/input';
 import { parseRecognitionInput, toGpuValue } from './lib/recognition/targets';
 import { resolveWorkerCount } from './lib/execution';
+import { mapWorkerResultPayload } from './lib/results';
 import { decideGpuWorkload } from './lib/webgpu/workload';
 import { useWebGPU } from './hooks/useWebGPU';
 import { Sidebar, InputBar, ResultCard, ResultsTable, EmptyState } from './components';
@@ -106,54 +107,6 @@ export default function CalculatorPage() {
     return 0;
   };
 
-  const getDisplayValue = (r: {
-    RPN: string;
-    REL_ERR?: number;
-    computed?: number;
-    computed_real?: number;
-    computed_imag?: number;
-  }) => {
-    if ((recognitionTarget === 'function' || recognitionTarget === 'sequence') && typeof r.REL_ERR === 'number') {
-      return `MSE ${r.REL_ERR.toExponential(2)}`;
-    }
-
-    if (domain === 'complex') {
-      const real = Number(r.computed_real);
-      const imag = Number(r.computed_imag);
-      if (Number.isFinite(real) && Number.isFinite(imag)) {
-        return formatComplexValue({ real, imag });
-      }
-    } else if (r.computed !== undefined) {
-      const computed = Number(r.computed);
-      if (Number.isFinite(computed)) return computed.toString();
-    }
-
-    return evaluateRPNDisplay(r.RPN, domain);
-  };
-
-  const getResultTargetLabel = (r: {
-    target_id?: number;
-    target?: number;
-    target_imag?: number;
-    target_label?: string;
-    targetLabel?: string;
-    targetIndex?: number;
-  }) => {
-    if (r.target_label) return r.target_label;
-    if (r.targetLabel) return r.targetLabel;
-
-    if (typeof r.target === 'number' && Number.isFinite(r.target)) {
-      if (typeof r.target_imag === 'number' && Number.isFinite(r.target_imag) && Math.abs(r.target_imag) > 1e-15) {
-        return formatComplexValue({ real: r.target, imag: r.target_imag });
-      }
-      return r.target.toPrecision(12);
-    }
-
-    if (typeof r.targetIndex === 'number') return `#${r.targetIndex + 1}`;
-    if (typeof r.target_id === 'number') return `#${r.target_id + 1}`;
-    return undefined;
-  };
-  
   // Best result = MAXIMUM Compression Ratio (CR) - this is the correct identification criterion
   // CR rises initially as accuracy improves, then falls when overfitting starts
   // The maximum CR indicates the true match
@@ -224,85 +177,29 @@ export default function CalculatorPage() {
     
     // Skip ready message
     if (data.type === 'ready') return;
-    
-    // Collect all results in one batch to avoid multiple re-renders
-    const newResults: SearchResult[] = [];
-    
-    // Worker completed with results array (new WASM uses 'candidates', old uses 'results')
-    const candidatesArray = data.candidates || data.results;
-    if (candidatesArray && Array.isArray(candidatesArray)) {
-      candidatesArray.forEach((r: { K: number; RPN: string; result: string; REL_ERR: number; status?: string; cpuId?: number; COMPRESSION_RATIO?: number; computed?: number; computed_real?: number; computed_imag?: number; target_id?: number; target?: number; target_imag?: number; target_label?: string }) => {
-        if (
-          recognitionTarget === 'multiple' &&
-          (r.result === 'INTERMEDIATE' || r.result === 'K_BEST' || r.status === 'RUNNING')
-        ) {
-          return;
-        }
 
-        // Calculate numeric value from RPN
-        let numericValue: string;
-        try {
-          numericValue = getDisplayValue(r);
-        } catch {
-          numericValue = 'N/A';
-        }
-        
-        const resolvedCpuId = r.cpuId ?? data.cpuId ?? cpuId;
-        newResults.push({
-          cpuId: resolvedCpuId,
-          K: r.K,
-          RPN: r.RPN,
-          result: numericValue,
-          REL_ERR: r.REL_ERR,
-          status: r.result === 'INTERMEDIATE' ? 'SEARCHING' : (r.result || r.status || 'K_BEST'),
-          targetIndex: typeof r.target_id === 'number' ? r.target_id : undefined,
-          targetLabel: getResultTargetLabel(r),
-          compressionRatio: r.COMPRESSION_RATIO
-        });
-      });
-      
-      // Handle final result (SUCCESS/FAILURE/ABORTED) from top-level data
-      if (data.result && data.RPN && recognitionTarget !== 'multiple') {
-        let numericValue: string;
-        try {
-          numericValue = getDisplayValue(data);
-        } catch {
-          numericValue = 'N/A';
-        }
-        
-        newResults.push({
-          cpuId: data.cpuId ?? cpuId,
-          K: data.K,
-          RPN: data.RPN,
-          result: numericValue,
-          REL_ERR: data.REL_ERR,
-          status: data.result, // SUCCESS, FAILURE, ABORTED
-          targetIndex: typeof data.target_id === 'number' ? data.target_id : undefined,
-          targetLabel: getResultTargetLabel(data),
-          compressionRatio: data.COMPRESSION_RATIO
-        });
-      }
-      
-      // Update state once with all results from this worker
-      if (newResults.length > 0) {
-        setResults(prev => [...prev, ...newResults]);
-      }
-      
-      const isSuccess = data.result === 'SUCCESS' && recognitionTarget !== 'multiple';
-      if (isSuccess && !searchEndedRef.current) {
-        searchEndedRef.current = true;
-        workersRef.current.forEach(w => w.terminate());
-        workersRef.current = [];
-        setActiveWorkers([]);
-        resolveAllRef.current?.();
-      } else {
-        // Worker finished
-        setActiveWorkers(prev => prev.filter(w => w.id !== cpuId));
-        
-        // Notify completion
-        if (onComplete) onComplete();
-      }
+    const newResults = mapWorkerResultPayload(data, cpuId, recognitionTarget, domain);
+    if (newResults.length > 0) {
+      setResults(prev => [...prev, ...newResults]);
     }
+
+    if (data.error) {
+      setBackendNotice(`Worker ${data.cpuId ?? cpuId}: ${data.error}`);
+    }
+
+    const isSuccess = data.result === 'SUCCESS' && recognitionTarget !== 'multiple';
+    if (isSuccess && !searchEndedRef.current) {
+      searchEndedRef.current = true;
+      workersRef.current.forEach(w => w.terminate());
+      workersRef.current = [];
+      setActiveWorkers([]);
+      resolveAllRef.current?.();
+      return;
+    }
+
+    // Worker finished, even if it returned no displayable candidates.
+    setActiveWorkers(prev => prev.filter(w => w.id !== cpuId));
+    onComplete?.();
   };
 
   const handleWorkerError = (cpuId: number, error: ErrorEvent) => {
@@ -513,6 +410,8 @@ export default function CalculatorPage() {
           z: zNum,
           targetValue,
           inputValue: inputValue,
+          constantTargets: parsedRecognition.constantTargets,
+          functionPoints: parsedRecognition.functionPoints,
           recognitionTarget: recognitionTarget,
           calculatorMode: calculatorMode,
           calculatorSpec,

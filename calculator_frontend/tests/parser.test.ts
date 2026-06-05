@@ -9,6 +9,7 @@ import {
 } from '../app/calculator/lib/input';
 import { parseRecognitionInput } from '../app/calculator/lib/recognition/targets';
 import { resolveWorkerCount } from '../app/calculator/lib/execution';
+import { mapWorkerResultPayload } from '../app/calculator/lib/results';
 import { evaluateRPNComplex, evaluateRPNDisplay } from '../app/calculator/lib/rpn';
 import {
   evaluateNamedRPNWithVariable,
@@ -280,6 +281,62 @@ describe('Frontend Input Parsing Logic', () => {
       expect(resolveWorkerCount('multiple', true, 8, 4)).toBe(1);
       expect(resolveWorkerCount('constant', true, 8, 4)).toBe(8);
       expect(resolveWorkerCount('function', false, 8, 3)).toBe(3);
+    });
+  });
+
+  describe('Worker result mapping', () => {
+    it('displays a top-level constant result even when the worker omits candidates', () => {
+      const results = mapWorkerResultPayload({
+        cpuId: 2,
+        result: 'SUCCESS',
+        K: 1,
+        RPN: 'PI',
+        REL_ERR: 0,
+        computed: Math.PI,
+      }, 0, 'constant', 'real');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({
+        cpuId: 2,
+        K: 1,
+        RPN: 'PI',
+        result: Math.PI.toString(),
+        REL_ERR: 0,
+        status: 'SUCCESS',
+      });
+    });
+
+    it('maps top-level function results to an MSE display value', () => {
+      const results = mapWorkerResultPayload({
+        cpuId: 1,
+        result: 'SUCCESS',
+        K: 2,
+        RPN: 'x, SQR',
+        REL_ERR: 1e-14,
+      }, 0, 'function', 'real');
+
+      expect(results).toHaveLength(1);
+      expect(results[0].result).toBe('MSE 1.00e-14');
+      expect(results[0].status).toBe('SUCCESS');
+    });
+
+    it('keeps final multiple-target candidates and skips transient progress rows', () => {
+      const results = mapWorkerResultPayload({
+        cpuId: 0,
+        result: 'PARTIAL',
+        candidates: [
+          { result: 'K_BEST', status: 'RUNNING', K: 1, RPN: 'PI', REL_ERR: 0.1 },
+          { target_id: 1, target_label: 'e', result: 'SUCCESS', K: 1, RPN: 'EULER', REL_ERR: 0, computed: Math.E },
+        ],
+      }, 0, 'multiple', 'real');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({
+        targetIndex: 1,
+        targetLabel: 'e',
+        status: 'SUCCESS',
+        result: Math.E.toString(),
+      });
     });
   });
 });
