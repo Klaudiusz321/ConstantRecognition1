@@ -6,6 +6,7 @@ import { CalculatorId, DEFAULT_CALCULATOR_ID, getCalculatorById } from './lib/ca
 import { evaluateRPNDisplay } from './lib/rpn';
 import { formatComplexValue, resolveInputUncertainty } from './lib/input';
 import { parseRecognitionInput, toGpuValue } from './lib/recognition/targets';
+import { resolveWorkerCount } from './lib/execution';
 import { decideGpuWorkload } from './lib/webgpu/workload';
 import { useWebGPU } from './hooks/useWebGPU';
 import { Sidebar, InputBar, ResultCard, ResultsTable, EmptyState } from './components';
@@ -462,7 +463,7 @@ export default function CalculatorPage() {
     }
 
     // CPU/WASM computation
-    const effectiveThreads = autoThreads ? detectedCPUs : threadCount;
+    const effectiveThreads = resolveWorkerCount(recognitionTarget, autoThreads, detectedCPUs, threadCount);
     
     // Terminate existing workers
     workersRef.current.forEach(w => w.terminate());

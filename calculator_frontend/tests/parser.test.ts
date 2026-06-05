@@ -8,6 +8,7 @@ import {
   resolveInputUncertainty,
 } from '../app/calculator/lib/input';
 import { parseRecognitionInput } from '../app/calculator/lib/recognition/targets';
+import { resolveWorkerCount } from '../app/calculator/lib/execution';
 import { evaluateRPNComplex, evaluateRPNDisplay } from '../app/calculator/lib/rpn';
 import {
   evaluateNamedRPNWithVariable,
@@ -271,6 +272,14 @@ describe('Frontend Input Parsing Logic', () => {
 
       expect(multiple.allowed).toBe(false);
       expect(sequence).toBe(701_750);
+    });
+  });
+
+  describe('CPU worker selection', () => {
+    it('runs multiple constants in one worker to avoid waiting on non-hit partitions', () => {
+      expect(resolveWorkerCount('multiple', true, 8, 4)).toBe(1);
+      expect(resolveWorkerCount('constant', true, 8, 4)).toBe(8);
+      expect(resolveWorkerCount('function', false, 8, 3)).toBe(3);
     });
   });
 });
