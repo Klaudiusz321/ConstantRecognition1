@@ -40,7 +40,11 @@ function loadWasmModule(domain) {
 
 function allocateDoubleArray(arr) {
     const ptr = Module._malloc(arr.length * 8);
-    Module.HEAPF64.set(arr, ptr / 8);
+    const heapF64 = Module.HEAPF64 || (typeof HEAPF64 !== 'undefined' ? HEAPF64 : null);
+    if (!heapF64) {
+        throw new Error('WASM HEAPF64 view is not available');
+    }
+    heapF64.set(arr, ptr / 8);
     return ptr;
 }
 
@@ -107,25 +111,40 @@ function doWork(initDelay, z, targetValue, inputValue, recognitionTarget, calcul
     return new Promise(resolve => {
         setTimeout(() => {
             try {
-                if (recognitionTarget === 'function') {
+                if (recognitionTarget === 'function' || recognitionTarget === 'sequence') {
                     const pairs = inputValue.split(/[\n;]/).map(p => p.trim()).filter(p => p);
                     const x_real = []; const x_imag = [];
                     const y_real = []; const y_imag = [];
-                    
-                    pairs.forEach(p => {
-                        const parts = p.split(/[:,]/);
-                        if (parts.length >= 2) {
+
+                    if (recognitionTarget === 'sequence') {
+                        const values = inputValue.split(/[,;\n]/).map(v => v.trim()).filter(Boolean);
+                        values.forEach((value, index) => {
+                            x_real.push(index + 1);
+                            x_imag.push(0);
                             if (domain === 'complex') {
-                                const px = parseComplexInput(parts[0]);
-                                const py = parseComplexInput(parts[1]);
-                                x_real.push(px.r); x_imag.push(px.i);
-                                y_real.push(py.r); y_imag.push(py.i);
+                                const parsed = parseComplexInput(value);
+                                y_real.push(parsed.r); y_imag.push(parsed.i);
                             } else {
-                                x_real.push(parseRealToken(parts[0]));
-                                y_real.push(parseRealToken(parts[1]));
+                                y_real.push(parseRealToken(value));
                             }
-                        }
-                    });
+                        });
+                    } else {
+                        pairs.forEach(p => {
+                            const separator = p.includes(':') ? ':' : ',';
+                            const parts = p.split(separator);
+                            if (parts.length >= 2) {
+                                if (domain === 'complex') {
+                                    const px = parseComplexInput(parts[0]);
+                                    const py = parseComplexInput(parts[1]);
+                                    x_real.push(px.r); x_imag.push(px.i);
+                                    y_real.push(py.r); y_imag.push(py.i);
+                                } else {
+                                    x_real.push(parseRealToken(parts[0]));
+                                    y_real.push(parseRealToken(parts[1]));
+                                }
+                            }
+                        });
+                    }
                     
                     if (x_real.length > 0) {
                         if (domain === 'complex') {
@@ -149,7 +168,7 @@ function doWork(initDelay, z, targetValue, inputValue, recognitionTarget, calcul
                             return;
                         }
                     }
-                } else if (recognitionTarget === 'multiple' || recognitionTarget === 'sequence') {
+                } else if (recognitionTarget === 'multiple') {
                     let values = [];
                     if (domain === 'complex') {
                         values = inputValue.split(/[,;\n]/).map(v => v.trim()).filter(Boolean).map(parseComplexInput);

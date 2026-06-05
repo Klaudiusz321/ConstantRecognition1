@@ -145,7 +145,9 @@ export function rpnToInfix(rpn: string | string[]): string {
   const stack: string[] = [];
   
   tokens.forEach(token => {
-    if (namedConstants[token]) {
+    if (token === 'x') {
+      stack.push('x');
+    } else if (namedConstants[token]) {
       stack.push(namedConstants[token]);
     } else if (namedFunctions[token]) {
       const arg = stack.pop() || '?';
@@ -174,6 +176,7 @@ export function evaluateRPN(rpn: string | string[]): number {
   // Detect if this is short-form (GPU) or long-form (WASM) RPN
   const isShort = typeof rpn === 'string' && isShortFormRPN(rpn);
   const tokens = typeof rpn === 'string' ? parseRPN(rpn) : rpn;
+  if (tokens.includes('x')) return NaN;
   const stack: number[] = [];
   tokens.forEach(token => {
     if (numConstants[token] !== undefined) {
@@ -303,7 +306,9 @@ export function evaluateRPNComplex(rpn: string | string[]): ComplexValue {
   const tokens = typeof rpn === 'string' ? parseRPN(rpn) : rpn;
   const stack: ComplexValue[] = [];
   tokens.forEach(token => {
-    if (complexConstants[token] !== undefined) {
+    if (token === 'x') {
+      stack.push({ real: NaN, imag: NaN });
+    } else if (complexConstants[token] !== undefined) {
       stack.push(complexConstants[token]);
     } else if (complexFunctions[token]) {
       const arg = stack.pop() || { real: 0, imag: 0 };
@@ -356,7 +361,9 @@ export function rpnToMathematica(rpn: string | string[]): string {
 
   const stack: string[] = [];
   tokens.forEach(token => {
-    if (mmaConstants[token]) {
+    if (token === 'x') {
+      stack.push('x');
+    } else if (mmaConstants[token]) {
       stack.push(mmaConstants[token]);
     } else if (mmaUnnamed[token]) {
       const arg = stack.pop() || '?';
@@ -434,7 +441,9 @@ export function rpnToLatex(rpn: string | string[]): string {
 
   const stack: LatexNode[] = [];
   tokens.forEach(token => {
-    if (latexConstants[token]) {
+    if (token === 'x') {
+      stack.push({ latex: 'x', precedence: 5 });
+    } else if (latexConstants[token]) {
       stack.push({ latex: latexConstants[token], precedence: 5 });
     } else if (latexFunctions[token]) {
       const arg = stack.pop() || { latex: '?', precedence: 5 };

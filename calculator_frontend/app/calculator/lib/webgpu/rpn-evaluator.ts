@@ -22,6 +22,62 @@ export const CONST_CHARS_COMPLEX = '0123Iopqrstuvw';
 export const UNARY_CHARS = '4589abcdefghijklmn';
 export const BINARY_CHARS = '67xyz';
 
+export const CONST_TOKENS = [
+  'PI',
+  'EULER',
+  'NEG',
+  'GOLDENRATIO',
+  'ONE',
+  'TWO',
+  'THREE',
+  'FOUR',
+  'FIVE',
+  'SIX',
+  'SEVEN',
+  'EIGHT',
+  'NINE',
+];
+
+export const CONST_TOKENS_COMPLEX = [
+  'PI',
+  'EULER',
+  'NEG',
+  'GOLDENRATIO',
+  'I',
+  'ONE',
+  'TWO',
+  'THREE',
+  'FOUR',
+  'FIVE',
+  'SIX',
+  'SEVEN',
+  'EIGHT',
+  'NINE',
+];
+
+export const UNARY_TOKENS = [
+  'LOG',
+  'EXP',
+  'INV',
+  'GAMMA',
+  'SQRT',
+  'SQR',
+  'SIN',
+  'ARCSIN',
+  'COS',
+  'ARCCOS',
+  'TAN',
+  'ARCTAN',
+  'SINH',
+  'ARCSINH',
+  'COSH',
+  'ARCCOSH',
+  'TANH',
+  'ARCTANH',
+];
+
+export const BINARY_TOKENS = ['PLUS', 'TIMES', 'SUBTRACT', 'DIVIDE', 'POWER'];
+
 const FP64_CONSTANTS: number[] = [
   Math.PI,
   Math.E,
@@ -308,4 +364,103 @@ export function indexToRPN(
   }
 
   return result;
+}
+
+export function indexToFunctionRPN(
+  idx: number,
+  form: number[],
+  radix: number[],
+  K: number,
+  domain: SearchDomain = 'real',
+): string {
+  const tokens: string[] = [];
+  const constTokens = domain === 'complex' ? CONST_TOKENS_COMPLEX : CONST_TOKENS;
+  let remaining = idx;
+
+  for (let i = 0; i < K; i++) {
+    const slot = remaining % radix[i];
+    remaining = Math.floor(remaining / radix[i]);
+
+    switch (form[i]) {
+      case 0:
+        tokens.push(slot === 0 ? 'x' : constTokens[slot - 1]);
+        break;
+      case 1:
+        tokens.push(UNARY_TOKENS[slot]);
+        break;
+      case 2:
+        tokens.push(BINARY_TOKENS[slot]);
+        break;
+    }
+  }
+
+  return tokens.join(', ');
+}
+
+const parseNamedRPN = (rpn: string) =>
+  rpn
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+export function evaluateNamedRPNWithVariable(rpn: string, x: number): number {
+  const stack: number[] = [];
+  const tokens = parseNamedRPN(rpn);
+
+  for (const token of tokens) {
+    if (token === 'x') {
+      stack.push(x);
+      continue;
+    }
+
+    const constIdx = CONST_TOKENS.indexOf(token);
+    const unaryIdx = UNARY_TOKENS.indexOf(token);
+    const binaryIdx = BINARY_TOKENS.indexOf(token);
+
+    if (constIdx >= 0) {
+      stack.push(FP64_CONSTANTS[constIdx]);
+    } else if (unaryIdx >= 0) {
+      if (stack.length < 1) return NaN;
+      const value = stack.pop()!;
+      stack.push(FP64_UNARY[unaryIdx](value));
+    } else if (binaryIdx >= 0) {
+      if (stack.length < 2) return NaN;
+      const right = stack.pop()!;
+      const left = stack.pop()!;
+      stack.push(FP64_BINARY[binaryIdx](right, left));
+    }
+  }
+
+  return stack.length === 1 ? stack[0] : NaN;
+}
+
+export function evaluateNamedRPNWithComplexVariable(rpn: string, x: ComplexNumber): ComplexNumber {
+  const stack: ComplexNumber[] = [];
+  const tokens = parseNamedRPN(rpn);
+
+  for (const token of tokens) {
+    if (token === 'x') {
+      stack.push(x);
+      continue;
+    }
+
+    const constIdx = CONST_TOKENS_COMPLEX.indexOf(token);
+    const unaryIdx = UNARY_TOKENS.indexOf(token);
+    const binaryIdx = BINARY_TOKENS.indexOf(token);
+
+    if (constIdx >= 0) {
+      stack.push(FP64_COMPLEX_CONSTANTS[constIdx]);
+    } else if (unaryIdx >= 0) {
+      if (stack.length < 1) return { real: NaN, imag: NaN };
+      const value = stack.pop()!;
+      stack.push(FP64_COMPLEX_UNARY[unaryIdx](value));
+    } else if (binaryIdx >= 0) {
+      if (stack.length < 2) return { real: NaN, imag: NaN };
+      const right = stack.pop()!;
+      const left = stack.pop()!;
+      stack.push(FP64_COMPLEX_BINARY[binaryIdx](right, left));
+    }
+  }
+
+  return stack.length === 1 ? stack[0] : { real: NaN, imag: NaN };
 }

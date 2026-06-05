@@ -101,8 +101,12 @@ export function Sidebar({
     constantsCore: selectedCalculator.constantsCore.filter((token) => domain === 'complex' || token !== 'I'),
   };
   const gpuSearchCompatible =
-    recognitionTarget === 'constant' &&
-    calculatorMode === 'standard';
+    calculatorMode === 'standard' &&
+    (
+      recognitionTarget === 'constant' ||
+      recognitionTarget === 'multiple' ||
+      ((recognitionTarget === 'function' || recognitionTarget === 'sequence') && domain === 'real')
+    );
   const gpuSearchActive =
     gpuSearchCompatible &&
     (computeMode === 'gpu' || computeMode === 'apple_silicon' || (computeMode === 'auto' && gpuAvailable));

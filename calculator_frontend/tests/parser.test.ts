@@ -7,8 +7,21 @@ import {
   parseSearchInput,
   resolveInputUncertainty,
 } from '../app/calculator/lib/input';
+import { parseRecognitionInput } from '../app/calculator/lib/recognition/targets';
 import { evaluateRPNComplex, evaluateRPNDisplay } from '../app/calculator/lib/rpn';
-import { evaluateShortRPNComplex, indexToRPN } from '../app/calculator/lib/webgpu';
+import {
+  evaluateNamedRPNWithVariable,
+  evaluateShortRPNComplex,
+  generateValidForms,
+  indexToFunctionRPN,
+  indexToRPN,
+} from '../app/calculator/lib/webgpu';
+import {
+  decideGpuWorkload,
+  estimateGpuEvaluations,
+  GPU_AUTO_EVALUATION_BUDGET,
+  GPU_EXPLICIT_EVALUATION_BUDGET,
+} from '../app/calculator/lib/webgpu/workload';
 
 describe('Frontend Input Parsing Logic', () => {
   describe('parseFunctionInput (MODE_FUNCTION)', () => {
@@ -56,6 +69,15 @@ describe('Frontend Input Parsing Logic', () => {
       const input = '3.14159, abc, 2.71828';
       const vals = parseMultipleConstants(input);
       expect(vals).toEqual([3.14159, 2.71828]);
+    });
+  });
+
+  describe('target-aware recognition parsing', () => {
+    it('models a sequence as indexed function samples', () => {
+      const parsed = parseRecognitionInput('1, 4, 9, 16', 'sequence', 'real');
+      expect(parsed.functionPoints.map((point) => point.x.real)).toEqual([1, 2, 3, 4]);
+      expect(parsed.functionPoints.map((point) => point.y.real)).toEqual([1, 4, 9, 16]);
+      expect(parsed.constantTargets).toEqual([]);
     });
   });
 
@@ -157,6 +179,98 @@ describe('Frontend Input Parsing Logic', () => {
       const result = evaluateShortRPNComplex('pfg');
       expect(result.real).toBeCloseTo(0, 15);
       expect(result.imag).toBeCloseTo(-Math.sqrt(3) / 2, 15);
+    });
+  });
+
+  describe('WebGPU function RPN helpers', () => {
+    it('adds x as a variable slot for function search', () => {
+      const form = [0, 1];
+      const radix = [14, 18];
+      expect(indexToFunctionRPN(70, form, radix, 2, 'real')).toBe('x, SQR');
+      expect(evaluateNamedRPNWithVariable('x, SQR', 3)).toBe(9);
+    });
+
+    it('generates function forms with one extra constant slot for x', () => {
+      const constantForms = generateValidForms(1, 'real');
+      const functionForms = generateValidForms(1, 'real', { includeVariable: true });
+      expect(constantForms[0].totalCombinations).toBe(13);
+      expect(functionForms[0].totalCombinations).toBe(14);
+    });
+  });
+
+  describe('WebGPU workload budget', () => {
+    it('estimates CALC4 search work from valid RPN forms', () => {
+      expect(estimateGpuEvaluations({
+        recognitionTarget: 'constant',
+        domain: 'real',
+        minK: 1,
+        maxK: 5,
+      })).toBe(3_243_968);
+    });
+
+    it('allows small automatic GPU searches and rejects heavier automatic searches', () => {
+      const small = decideGpuWorkload({
+        recognitionTarget: 'constant',
+        domain: 'real',
+        minK: 1,
+        maxK: 5,
+        computeMode: 'auto',
+      });
+      const heavy = decideGpuWorkload({
+        recognitionTarget: 'constant',
+        domain: 'real',
+        minK: 1,
+        maxK: 6,
+        computeMode: 'auto',
+      });
+
+      expect(GPU_AUTO_EVALUATION_BUDGET).toBe(5_000_000);
+      expect(small.allowed).toBe(true);
+      expect(heavy.allowed).toBe(false);
+      expect(heavy.estimatedEvaluations).toBeGreaterThan(GPU_AUTO_EVALUATION_BUDGET);
+    });
+
+    it('caps explicit GPU searches before billion-scale workloads', () => {
+      const explicitK6 = decideGpuWorkload({
+        recognitionTarget: 'constant',
+        domain: 'real',
+        minK: 1,
+        maxK: 6,
+        computeMode: 'gpu',
+      });
+      const explicitK7 = decideGpuWorkload({
+        recognitionTarget: 'constant',
+        domain: 'real',
+        minK: 1,
+        maxK: 7,
+        computeMode: 'gpu',
+      });
+
+      expect(GPU_EXPLICIT_EVALUATION_BUDGET).toBe(100_000_000);
+      expect(explicitK6.allowed).toBe(true);
+      expect(explicitK7.allowed).toBe(false);
+      expect(explicitK7.estimatedEvaluations).toBeGreaterThan(GPU_EXPLICIT_EVALUATION_BUDGET);
+    });
+
+    it('multiplies GPU workload for multiple targets and function samples', () => {
+      const multiple = decideGpuWorkload({
+        recognitionTarget: 'multiple',
+        domain: 'real',
+        minK: 1,
+        maxK: 5,
+        targetCount: 2,
+        computeMode: 'auto',
+      });
+      const sequence = estimateGpuEvaluations({
+        recognitionTarget: 'sequence',
+        domain: 'real',
+        minK: 1,
+        maxK: 4,
+        pointCount: 5,
+      });
+
+      expect(multiple.allowed).toBe(false);
+      expect(sequence).toBe(701_750);
     });
   });
 });

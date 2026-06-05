@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ComplexNumber, ConstantRecognitionGPU, GPUInfo, GPUSearchResult, getGPUInstance } from '../lib/webgpu';
+import type { SearchOptions } from '../lib/webgpu';
 
 interface UseWebGPUReturn {
   gpuAvailable: boolean;
@@ -10,15 +11,6 @@ interface UseWebGPUReturn {
   isSearching: boolean;
   search: (target: number | ComplexNumber, options?: SearchOptions) => Promise<GPUSearchResult[]>;
   abort: () => void;
-}
-
-interface SearchOptions {
-  minK?: number;
-  maxK?: number;
-  absoluteTolerance?: number;
-  domain?: 'real' | 'complex';
-  onProgress?: (info: { K: number; forms: number; evaluated: number }) => void;
-  onResult?: (result: GPUSearchResult) => void;
 }
 
 export function useWebGPU(): UseWebGPUReturn {

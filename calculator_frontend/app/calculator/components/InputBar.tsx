@@ -29,7 +29,7 @@ export function InputBar({
   const placeholder = (() => {
     if (recognitionTarget === 'function') return domain === 'complex' ? '0:1; i:0+1i; 1+i:2' : '0:1; 1:2; 2:5';
     if (recognitionTarget === 'multiple') return domain === 'complex' ? 'pi, i, 1+i' : 'pi, e, 1.6180339887';
-    if (recognitionTarget === 'sequence') return '1, 1, 2, 3, 5, 8';
+    if (recognitionTarget === 'sequence') return '1, 4, 9, 16, 25';
     return domain === 'complex' ? 'Enter a value, e.g. i^i or 1+2i' : 'Enter a number, e.g. Pi or 3.14159265...';
   })();
 

@@ -4,7 +4,9 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { SearchResult, Filters, Precision, ActiveWorker, defaultFilters, ErrorMode, ComputeMode, RecognitionTarget, Domain, CalculatorMode, SearchCalculatorSpec } from './lib/types';
 import { CalculatorId, DEFAULT_CALCULATOR_ID, getCalculatorById } from './lib/calculators';
 import { evaluateRPNDisplay } from './lib/rpn';
-import { formatComplexValue, parseSearchInput, resolveInputUncertainty } from './lib/input';
+import { formatComplexValue, resolveInputUncertainty } from './lib/input';
+import { parseRecognitionInput, toGpuValue } from './lib/recognition/targets';
+import { decideGpuWorkload } from './lib/webgpu/workload';
 import { useWebGPU } from './hooks/useWebGPU';
 import { Sidebar, InputBar, ResultCard, ResultsTable, EmptyState } from './components';
 
@@ -105,10 +107,15 @@ export default function CalculatorPage() {
 
   const getDisplayValue = (r: {
     RPN: string;
+    REL_ERR?: number;
     computed?: number;
     computed_real?: number;
     computed_imag?: number;
   }) => {
+    if ((recognitionTarget === 'function' || recognitionTarget === 'sequence') && typeof r.REL_ERR === 'number') {
+      return `MSE ${r.REL_ERR.toExponential(2)}`;
+    }
+
     if (domain === 'complex') {
       const real = Number(r.computed_real);
       const imag = Number(r.computed_imag);
@@ -275,28 +282,21 @@ export default function CalculatorPage() {
     setInputError(null);
     setBackendNotice(null);
 
-    const firstInputValue = inputValue.split(/[;,\n:]/)[0]?.trim() || inputValue.trim();
-    const targetInputForPrecision = recognitionTarget === 'constant' ? inputValue.trim() : firstInputValue;
-    let targetValue = { real: 0, imag: 0 };
-    let targetMagnitude = 1;
-    let zNum = 0;
+    let parsedRecognition;
 
     try {
-      const parsed = parseSearchInput(targetInputForPrecision);
-      targetValue = { real: parsed.real, imag: parsed.imag };
-      targetMagnitude = Math.max(Math.hypot(parsed.real, parsed.imag), 1);
-      zNum = parsed.real;
-
-      if (recognitionTarget === 'constant' && domain === 'real' && Math.abs(parsed.imag) > 1e-12) {
-        setInputError('This target has an imaginary part. Switch Domain to Complex.');
-        return;
-      }
+      parsedRecognition = parseRecognitionInput(inputValue, recognitionTarget, domain);
     } catch (err) {
-      if (recognitionTarget === 'constant') {
-        setInputError(err instanceof Error ? err.message : 'Could not parse the target value.');
-        return;
-      }
+      setInputError(err instanceof Error ? err.message : 'Could not parse the target value.');
+      return;
     }
+
+    const targetInputForPrecision = recognitionTarget === 'constant'
+      ? inputValue.trim()
+      : parsedRecognition.primaryInput;
+    const targetValue = parsedRecognition.primaryValue;
+    const targetMagnitude = parsedRecognition.targetMagnitude;
+    const zNum = targetValue.real;
     
     setIsCalculating(true);
     setResults([]);
@@ -321,11 +321,8 @@ export default function CalculatorPage() {
     
     // Update precision display
     const relDeltaZ = targetMagnitude !== 0 ? deltaZNum / targetMagnitude : 0;
-    const precisionTarget = recognitionTarget === 'constant'
-      ? formatComplexValue(targetValue)
-      : inputValue;
     setPrecision({
-      z: precisionTarget,
+      z: parsedRecognition.precisionLabel,
       deltaZ: deltaZNum === 0 ? '0' : deltaZNum.toExponential(2),
       relDeltaZ: relDeltaZ === 0 ? '0' : relDeltaZ.toExponential(2)
     });
@@ -335,29 +332,65 @@ export default function CalculatorPage() {
     setSortDirection(exactSearch ? 'asc' : 'desc');
 
     const gpuCompatible =
-      recognitionTarget === 'constant' &&
-      calculatorMode === 'standard';
+      calculatorMode === 'standard' &&
+      (
+        recognitionTarget === 'constant' ||
+        recognitionTarget === 'multiple' ||
+        ((recognitionTarget === 'function' || recognitionTarget === 'sequence') && domain === 'real')
+      );
 
-    const shouldUseGpu = gpuCompatible && gpuAvailable && (
+    const wantsGpu = (
       computeMode === 'gpu' ||
       computeMode === 'apple_silicon' ||
       computeMode === 'auto'
     );
+    const gpuWorkload = gpuCompatible && wantsGpu
+      ? decideGpuWorkload({
+          recognitionTarget,
+          domain,
+          minK: 1,
+          maxK: searchDepth,
+          targetCount: parsedRecognition.constantTargets.length,
+          pointCount: parsedRecognition.functionPoints.length,
+          computeMode,
+        })
+      : null;
+    const shouldUseGpu = gpuCompatible && gpuAvailable && wantsGpu && (gpuWorkload?.allowed ?? true);
+
+    if (gpuCompatible && gpuAvailable && wantsGpu && gpuWorkload && !gpuWorkload.allowed) {
+      setBackendNotice(`${gpuWorkload.reason} Using CPU/WASM fallback to avoid excessive GPU load.`);
+    }
 
     if (shouldUseGpu) {
       setActiveWorkers([]);
       try {
-        const gpuTarget = domain === 'complex' ? targetValue : zNum;
-        const gpuResults = await searchGPU(gpuTarget, {
+        const gpuTarget = toGpuValue(parsedRecognition.primaryValue, domain);
+        const gpuOptions = {
           minK: 1,
           maxK: searchDepth,
           absoluteTolerance: deltaZNum,
-          domain
+          domain,
+          recognitionTarget,
+          targets: recognitionTarget === 'multiple'
+            ? parsedRecognition.constantTargets.map((value) => toGpuValue(value, domain))
+            : undefined,
+          functionPoints: (recognitionTarget === 'function' || recognitionTarget === 'sequence')
+            ? parsedRecognition.functionPoints.map((point) => ({
+                x: point.x.real,
+                y: point.y.real,
+                label: point.label,
+              }))
+            : undefined,
+        };
+        const gpuResults = await searchGPU(gpuTarget, {
+          ...gpuOptions,
         });
 
         const mappedResults: SearchResult[] = gpuResults.map(result => {
           let numericValue: string;
-          try {
+          if (recognitionTarget === 'function' || recognitionTarget === 'sequence') {
+            numericValue = `MSE ${result.REL_ERR.toExponential(2)}`;
+          } else try {
             numericValue = evaluateRPNDisplay(result.RPN, domain);
           } catch {
             numericValue = 'N/A';

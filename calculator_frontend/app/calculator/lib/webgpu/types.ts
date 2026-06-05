@@ -125,6 +125,8 @@ export interface GPUSearchResult {
   status: string;
   cpuId: number;
   domain?: 'real' | 'complex';
+  targetIndex?: number;
+  targetLabel?: string;
 }
 
 export interface GPUInfo {
@@ -147,11 +149,20 @@ export interface Candidate {
   radix: number[];
 }
 
+export interface GPUFunctionPoint {
+  x: number;
+  y: number;
+  label?: string;
+}
+
 export interface SearchOptions {
   minK?: number;
   maxK?: number;
   absoluteTolerance?: number;
   domain?: 'real' | 'complex';
+  recognitionTarget?: 'constant' | 'multiple' | 'function' | 'sequence';
+  targets?: Array<number | { real: number; imag: number }>;
+  functionPoints?: GPUFunctionPoint[];
   onProgress?: (info: { K: number; forms: number; evaluated: number }) => void;
   onResult?: (result: GPUSearchResult) => void;
 }

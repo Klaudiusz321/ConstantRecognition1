@@ -31,10 +31,14 @@ export function checkSyntax3(ternary: number[]): boolean {
  * @param K - Formula length (number of tokens)
  * @returns Array of valid form descriptors
  */
-export function generateValidForms(K: number, domain: SearchDomain = 'real'): FormDescriptor[] {
+export function generateValidForms(
+  K: number,
+  domain: SearchDomain = 'real',
+  options: { includeVariable?: boolean } = {},
+): FormDescriptor[] {
   const forms: FormDescriptor[] = [];
   const total = Math.pow(3, K);
-  const nConst = domain === 'complex' ? N_CONST_COMPLEX : N_CONST;
+  const nConst = (domain === 'complex' ? N_CONST_COMPLEX : N_CONST) + (options.includeVariable ? 1 : 0);
 
   for (let i = 0; i < total; i++) {
     // Convert index to ternary representation
@@ -70,7 +74,11 @@ export function generateValidForms(K: number, domain: SearchDomain = 'real'): Fo
  * @param K - Formula length
  * @returns Total combinations across all valid forms
  */
-export function getTotalCombinations(K: number, domain: SearchDomain = 'real'): number {
-  const forms = generateValidForms(K, domain);
+export function getTotalCombinations(
+  K: number,
+  domain: SearchDomain = 'real',
+  options: { includeVariable?: boolean } = {},
+): number {
+  const forms = generateValidForms(K, domain, options);
   return forms.reduce((sum, form) => sum + form.totalCombinations, 0);
 }
