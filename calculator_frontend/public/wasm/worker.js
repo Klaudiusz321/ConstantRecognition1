@@ -178,7 +178,7 @@ function doWork(initDelay, z, targetValue, inputValue, recognitionTarget, calcul
                     
                     if (values.length > 0) {
                         if (domain === 'complex') {
-                            const xr_arr = new Array(values.length).fill(0);
+                            const xr_arr = values.map((_, index) => index);
                             const xi_arr = new Array(values.length).fill(0);
                             const yr_arr = values.map(v => v.r);
                             const yi_arr = values.map(v => v.i);
@@ -191,7 +191,7 @@ function doWork(initDelay, z, targetValue, inputValue, recognitionTarget, calcul
                             resolve(JSON.parse(result));
                             return;
                         } else {
-                            const x_arr = new Array(values.length).fill(0);
+                            const x_arr = values.map((_, index) => index);
                             const x_ptr = allocateDoubleArray(x_arr);
                             const y_ptr = allocateDoubleArray(values);
                             const result = Module.ccall('search_batch_wasm', 'string',

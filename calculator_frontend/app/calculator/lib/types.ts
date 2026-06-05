@@ -22,6 +22,8 @@ export interface SearchResult {
   result: string;
   REL_ERR: number;
   status: string;
+  targetIndex?: number;
+  targetLabel?: string;
   compressionRatio?: number;
   fp32Evals?: number;
   fp64Evals?: number;

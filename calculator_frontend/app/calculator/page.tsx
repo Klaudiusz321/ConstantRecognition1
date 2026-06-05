@@ -129,6 +129,27 @@ export default function CalculatorPage() {
 
     return evaluateRPNDisplay(r.RPN, domain);
   };
+
+  const getResultTargetLabel = (r: {
+    target_id?: number;
+    target?: number;
+    target_imag?: number;
+    targetLabel?: string;
+    targetIndex?: number;
+  }) => {
+    if (r.targetLabel) return r.targetLabel;
+
+    if (typeof r.target === 'number' && Number.isFinite(r.target)) {
+      if (typeof r.target_imag === 'number' && Number.isFinite(r.target_imag) && Math.abs(r.target_imag) > 1e-15) {
+        return formatComplexValue({ real: r.target, imag: r.target_imag });
+      }
+      return r.target.toPrecision(12);
+    }
+
+    if (typeof r.targetIndex === 'number') return `#${r.targetIndex + 1}`;
+    if (typeof r.target_id === 'number') return `#${r.target_id + 1}`;
+    return undefined;
+  };
   
   // Best result = MAXIMUM Compression Ratio (CR) - this is the correct identification criterion
   // CR rises initially as accuracy improves, then falls when overfitting starts
@@ -207,7 +228,7 @@ export default function CalculatorPage() {
     // Worker completed with results array (new WASM uses 'candidates', old uses 'results')
     const candidatesArray = data.candidates || data.results;
     if (candidatesArray && Array.isArray(candidatesArray)) {
-      candidatesArray.forEach((r: { K: number; RPN: string; result: string; REL_ERR: number; status?: string; cpuId?: number; COMPRESSION_RATIO?: number; computed?: number; computed_real?: number; computed_imag?: number }) => {
+      candidatesArray.forEach((r: { K: number; RPN: string; result: string; REL_ERR: number; status?: string; cpuId?: number; COMPRESSION_RATIO?: number; computed?: number; computed_real?: number; computed_imag?: number; target_id?: number; target?: number; target_imag?: number }) => {
         // Calculate numeric value from RPN
         let numericValue: string;
         try {
@@ -224,6 +245,8 @@ export default function CalculatorPage() {
           result: numericValue,
           REL_ERR: r.REL_ERR,
           status: r.result === 'INTERMEDIATE' ? 'SEARCHING' : (r.result || r.status || 'K_BEST'),
+          targetIndex: typeof r.target_id === 'number' ? r.target_id : undefined,
+          targetLabel: getResultTargetLabel(r),
           compressionRatio: r.COMPRESSION_RATIO
         });
       });
@@ -244,6 +267,8 @@ export default function CalculatorPage() {
           result: numericValue,
           REL_ERR: data.REL_ERR,
           status: data.result, // SUCCESS, FAILURE, ABORTED
+          targetIndex: typeof data.target_id === 'number' ? data.target_id : undefined,
+          targetLabel: getResultTargetLabel(data),
           compressionRatio: data.COMPRESSION_RATIO
         });
       }
@@ -402,7 +427,9 @@ export default function CalculatorPage() {
             RPN: result.RPN,
             result: numericValue,
             REL_ERR: result.REL_ERR,
-            status: result.status
+            status: result.status,
+            targetIndex: result.targetIndex,
+            targetLabel: result.targetLabel,
           };
         });
 

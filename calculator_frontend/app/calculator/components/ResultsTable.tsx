@@ -103,7 +103,8 @@ export function ResultsTable({
         const query = filters.searchQuery.toLowerCase();
         const matchRPN = r.RPN.toLowerCase().includes(query);
         const matchResult = r.result?.toLowerCase().includes(query);
-        if (!matchRPN && !matchResult) return false;
+        const matchTarget = r.targetLabel?.toLowerCase().includes(query);
+        if (!matchRPN && !matchResult && !matchTarget) return false;
       }
       
       return true;
@@ -267,6 +268,7 @@ export function ResultsTable({
           <thead className="bg-gray-50 dark:bg-[#111113] sticky top-0">
             <tr className="text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider text-left">
               <th className="p-3 w-16">CPU</th>
+              <th className="p-3 w-28">Target</th>
               <th 
                 className="p-3 w-20 cursor-pointer hover:text-[#0066cc] select-none"
                 onClick={() => handleSort('K')}
@@ -309,6 +311,9 @@ export function ResultsTable({
                 }`}
               >
                 <td className="p-3 font-mono text-gray-500 dark:text-gray-500">{r.cpuId}</td>
+                <td className="p-3 font-mono text-xs text-gray-600 dark:text-gray-400 truncate" title={r.targetLabel}>
+                  {r.targetLabel ?? '-'}
+                </td>
                 <td className="p-3 font-mono font-medium text-gray-900 dark:text-white">{r.K}</td>
                 <td className="p-3 min-w-0 overflow-hidden">
                   <a
@@ -368,7 +373,7 @@ export function ResultsTable({
             );})}
             {filteredAndSortedResults.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-gray-500 dark:text-gray-500">
+                <td colSpan={9} className="px-4 py-8 text-center text-gray-500 dark:text-gray-500">
                   No matching results found
                 </td>
               </tr>
