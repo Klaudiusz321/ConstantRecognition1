@@ -257,7 +257,7 @@ export function ResultsTable({
         <table className="w-full table-fixed">
           <thead className="bg-gray-50 dark:bg-[#111113] sticky top-0">
             <tr className="text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider text-left">
-              <th className="p-3 w-16">CPU</th>
+              <th className="p-3 w-28">Search engine</th>
               <th 
                 className="p-3 w-20 cursor-pointer hover:text-[#0066cc] select-none"
                 onClick={() => handleSort('K')}
@@ -299,7 +299,18 @@ export function ResultsTable({
                       : ''
                 }`}
               >
-                <td className="p-3 font-mono text-gray-500 dark:text-gray-500">{r.cpuId}</td>
+                <td className="p-3 text-gray-500 dark:text-gray-500">
+                  <span
+                    className={`inline-flex rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${
+                      r.cpuId < 0
+                        ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300'
+                        : 'bg-gray-100 text-gray-600 dark:bg-[#2a2a2e] dark:text-gray-300'
+                    }`}
+                    title={r.cpuId < 0 ? 'Screened on GPU and verified on CPU' : `Calculated by CPU worker ${r.cpuId}`}
+                  >
+                    {r.cpuId < 0 ? 'GPU + CPU' : `CPU ${r.cpuId}`}
+                  </span>
+                </td>
                 <td className="p-3 font-mono font-medium text-gray-900 dark:text-white">{r.K}</td>
                 <td className="p-3">
                   <a 

@@ -1,12 +1,19 @@
 'use client';
 
 import { useState } from 'react';
-import { ActiveWorker, Precision, ErrorMode } from '../lib/types';
+import { ActiveWorker, Precision, ErrorMode, ComputeEngine } from '../lib/types';
+import { formatGPUAdapterName } from '../lib/gpu-ui';
 import { getCalculatorById, DEFAULT_CALCULATOR_ID } from '../lib/calculators';
 import { CalculatorPalette } from './CalculatorPalette';
 
 interface SidebarProps {
   wasmLoaded: boolean;
+  gpuChecked: boolean;
+  gpuSupported: boolean;
+  gpuAdapterName: string | null;
+  gpuError: string | null;
+  computeEngine: ComputeEngine;
+  setComputeEngine: (engine: ComputeEngine) => void;
   detectedCPUs: number;
   searchDepth: number;
   setSearchDepth: (depth: number) => void;
@@ -36,6 +43,12 @@ interface SidebarProps {
 
 export function Sidebar({
   wasmLoaded,
+  gpuChecked,
+  gpuSupported,
+  gpuAdapterName,
+  gpuError,
+  computeEngine,
+  setComputeEngine,
   detectedCPUs,
   searchDepth,
   setSearchDepth,
@@ -68,9 +81,10 @@ export function Sidebar({
     (errorMode === 'manual' && Number.isFinite(manualTolerance) && manualTolerance > 0);
   const earlyExitCRActive = toleranceSearchActive;
   const earlyExitCRNote = toleranceSearchActive
-    ? 'Applies to CPU/WASM tolerance-based search.'
+    ? 'Applies to CPU/WASM and CPU-verified GPU search.'
     : 'Ignored for exact search (± 0). Use Auto or Manual uncertainty to enable it.';
   const noConstants = !enabledTokens.some((t) => calculator.constantsCore.includes(t) || calculator.constantsRedundant.includes(t));
+  const friendlyAdapterName = formatGPUAdapterName(gpuAdapterName);
 
   return (
     <>
@@ -147,10 +161,18 @@ export function Sidebar({
         <div className="flex-1 p-4 space-y-6 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
           {/* Status */}
           <div className="space-y-2">
-            <label className="text-xs lg:text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">Status</label>
+            <div className="text-xs lg:text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">Status</div>
             <div className="flex items-center gap-2 text-base lg:text-sm">
-              <div className={`w-3 h-3 lg:w-2 lg:h-2 rounded-full ${wasmLoaded ? 'bg-green-500' : 'bg-amber-500'}`} />
+              <div className={`w-3 h-3 lg:w-2 lg:h-2 rounded-full ${wasmLoaded ? 'bg-green-500' : 'bg-amber-500'}`} aria-hidden="true" />
               <span className="text-gray-700 dark:text-gray-300">{wasmLoaded ? 'WASM Ready' : 'Demo Mode'}</span>
+            </div>
+            <div className="flex items-center gap-2 text-base lg:text-sm">
+              <div className={`w-3 h-3 lg:w-2 lg:h-2 rounded-full ${
+                !gpuChecked ? 'bg-gray-400' : gpuSupported ? 'bg-green-500' : 'bg-amber-500'
+              }`} aria-hidden="true" />
+              <span className="text-gray-700 dark:text-gray-300">
+                {!gpuChecked ? 'Checking acceleration...' : gpuSupported ? 'GPU acceleration ready' : 'CPU mode'}
+              </span>
             </div>
             <div className="text-sm lg:text-xs text-gray-500 dark:text-gray-500">
               {detectedCPUs} logical CPUs detected
@@ -221,7 +243,8 @@ export function Sidebar({
                 max="9"
                 value={searchDepth}
                 onChange={(e) => setSearchDepth(parseInt(e.target.value))}
-                className="flex-1 accent-[#0066cc] h-2"
+                disabled={isCalculating}
+                className="flex-1 accent-[#0066cc] h-2 disabled:opacity-40"
               />
               <span className="font-mono text-sm font-bold text-gray-900 dark:text-white w-4">{searchDepth}</span>
             </div>
@@ -240,7 +263,7 @@ export function Sidebar({
                 max="32"
                 value={threadCount}
                 onChange={(e) => setThreadCount(parseInt(e.target.value))}
-                disabled={autoThreads}
+                disabled={autoThreads || computeEngine === 'gpu' || isCalculating}
                 className="flex-1 accent-[#0066cc] disabled:opacity-40 h-2"
               />
               <span className="font-mono text-sm font-bold text-gray-900 dark:text-white w-8">
@@ -252,10 +275,14 @@ export function Sidebar({
                 type="checkbox"
                 checked={autoThreads}
                 onChange={(e) => setAutoThreads(e.target.checked)}
+                disabled={computeEngine === 'gpu' || isCalculating}
                 className="accent-[#0066cc] w-4 h-4"
               />
               Auto-detect ({detectedCPUs} CPUs)
             </label>
+            {computeEngine === 'gpu' && (
+              <p className="text-[10px] text-gray-400">CPU threads are not used by the WebGPU screening pass.</p>
+            )}
           </div>
 
           {/* Advanced Options Toggle */}
@@ -279,6 +306,72 @@ export function Sidebar({
           {/* Advanced Options Content */}
           {showAdvanced && (
             <div className="space-y-6 pb-2">
+
+              {/* Compute backend */}
+              <fieldset className="space-y-3" disabled={isCalculating}>
+                <legend className="text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+                  Compute Engine
+                </legend>
+                <p id="compute-engine-help" className="text-[11px] leading-5 text-gray-500 dark:text-gray-400">
+                  Auto is recommended. It uses GPU acceleration when available and falls back safely to CPU/WASM.
+                </p>
+                <div className="space-y-2" aria-describedby="compute-engine-help">
+                  {([
+                    {
+                      value: 'auto' as const,
+                      title: 'Auto (recommended)',
+                      description: 'Fastest available engine with automatic fallback.',
+                      disabled: false,
+                    },
+                    {
+                      value: 'gpu' as const,
+                      title: 'GPU acceleration',
+                      description: 'GPU screening with CPU verification for every result.',
+                      disabled: !gpuSupported,
+                    },
+                    {
+                      value: 'cpu' as const,
+                      title: 'CPU / WASM',
+                      description: 'Compatible mode without graphics acceleration.',
+                      disabled: false,
+                    },
+                  ]).map((option) => (
+                    <label
+                      key={option.value}
+                      className={`flex min-h-14 items-start gap-3 rounded-lg border p-3 transition-colors ${
+                        option.disabled
+                          ? 'cursor-not-allowed border-gray-200 opacity-50 dark:border-[#2a2a2e]'
+                          : computeEngine === option.value
+                            ? 'cursor-pointer border-[#0066cc] bg-blue-50 dark:bg-blue-950/30'
+                            : 'cursor-pointer border-gray-200 hover:border-gray-300 dark:border-[#2a2a2e] dark:hover:border-[#3a3a3e]'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="computeEngine"
+                        value={option.value}
+                        checked={computeEngine === option.value}
+                        onChange={() => setComputeEngine(option.value as ComputeEngine)}
+                        disabled={option.disabled || isCalculating}
+                        className="mt-0.5 h-4 w-4 shrink-0 accent-[#0066cc]"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">{option.title}</span>
+                        <span className="mt-0.5 block text-[11px] leading-4 text-gray-500 dark:text-gray-400">{option.description}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <div className="rounded-lg bg-gray-50 p-3 text-[11px] leading-5 text-gray-500 dark:bg-[#111113] dark:text-gray-400">
+                  {friendlyAdapterName ? (
+                    <span>Graphics processor: <strong className="font-medium text-gray-700 dark:text-gray-300">{friendlyAdapterName}</strong></span>
+                  ) : gpuSupported ? (
+                    <span>A compatible graphics processor is available.</span>
+                  ) : (
+                    <span title={gpuError ?? undefined}>GPU acceleration is unavailable. Searches will use CPU mode.</span>
+                  )}
+                </div>
+              </fieldset>
 
               {/* Uncertainty Mode */}
               <div className="space-y-2">
