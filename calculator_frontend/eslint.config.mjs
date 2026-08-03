@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Emscripten output and browser worker assets are generated/static files,
+    // not source modules maintained by the frontend linter.
+    "public/wasm/**/*.js",
   ]),
 ]);
 

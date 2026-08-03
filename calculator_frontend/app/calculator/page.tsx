@@ -1,14 +1,27 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { SearchResult, Filters, Precision, ActiveWorker, defaultFilters, ErrorMode } from './lib/types';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import {
+  SearchResult,
+  Filters,
+  Precision,
+  ActiveWorker,
+  defaultFilters,
+  ErrorMode,
+  ComputeEngine,
+  SearchBackend,
+  SearchPhase,
+  SearchProgress as SearchProgressData,
+} from './lib/types';
 import { extractPrecision, evaluateRPN } from './lib/rpn';
 import {
   buildTaskQueue, createResultFilter, SearchTask, CalculatorSelection,
   CALC4_CONSTS, CALC4_FUNCS, CALC4_OPS
 } from './lib/taskQueue';
 import { getCompressionRatio as computeCR } from './lib/cr';
-import { Sidebar, InputBar, ResultCard, ResultsTable, EmptyState } from './components';
+import { WebGPUConstantRecognizer, type GPUProgress } from './lib/webgpu-v2';
+import { describeGPUCompletion, getAccelerationStatus, getGPUFallbackNotice } from './lib/gpu-ui';
+import { Sidebar, InputBar, ResultCard, ResultsTable, EmptyState, SearchProgress } from './components';
 
 const ALL_TOKENS = [...CALC4_CONSTS, ...CALC4_FUNCS, ...CALC4_OPS];
 
@@ -30,7 +43,16 @@ export default function CalculatorPage() {
   const [inputValue, setInputValue] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [wasmLoaded, setWasmLoaded] = useState(false);
-  const [isCalculating, setIsCalculating] = useState(false);
+  const [gpuChecked, setGpuChecked] = useState(false);
+  const [gpuSupported, setGpuSupported] = useState(false);
+  const [gpuAdapterName, setGpuAdapterName] = useState<string | null>(null);
+  const [gpuError, setGpuError] = useState<string | null>(null);
+  const [computeEngine, setComputeEngine] = useState<ComputeEngine>('auto');
+  const [searchBackend, setSearchBackend] = useState<SearchBackend | null>(null);
+  const [searchPhase, setSearchPhase] = useState<SearchPhase>('idle');
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchNotice, setSearchNotice] = useState<string | null>(null);
+  const [searchDetail, setSearchDetail] = useState<string | null>(null);
   const [searchDepth, setSearchDepth] = useState(7);
   const [threadCount, setThreadCount] = useState(4);
   const [autoThreads, setAutoThreads] = useState(true);
@@ -38,10 +60,9 @@ export default function CalculatorPage() {
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [precision, setPrecision] = useState<Precision>({});
   const [activeWorkers, setActiveWorkers] = useState<ActiveWorker[]>([]);
-  const [taskProgress, setTaskProgress] = useState<{ done: number; total: number } | null>(null);
+  const [taskProgress, setTaskProgress] = useState<SearchProgressData | null>(null);
   const [sortColumn, setSortColumn] = useState<'K' | 'REL_ERR' | 'CR' | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-  const [searchFinished, setSearchFinished] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
@@ -60,6 +81,27 @@ export default function CalculatorPage() {
   const startTimeRef = useRef<number>(0);
   const resolveAllRef = useRef<(() => void) | null>(null);
   const searchEndedRef = useRef(false);
+  const gpuRecognizerRef = useRef<WebGPUConstantRecognizer | null>(null);
+  const gpuInitializationRef = useRef<Promise<WebGPUConstantRecognizer> | null>(null);
+  const gpuAbortRef = useRef<AbortController | null>(null);
+  const searchRunIdRef = useRef(0);
+  const mountedRef = useRef(true);
+  const searchStatusRef = useRef<HTMLDivElement | null>(null);
+
+  const isCalculating = searchPhase === 'running';
+  const searchFinished = searchPhase === 'complete' || searchPhase === 'partial';
+  const accelerationStatus = useMemo(
+    () => getAccelerationStatus({
+      checked: gpuChecked,
+      supported: gpuSupported,
+      engine: computeEngine,
+      phase: searchPhase,
+      backend: searchBackend,
+      adapterName: gpuAdapterName,
+      error: gpuError,
+    }),
+    [gpuChecked, gpuSupported, computeEngine, searchPhase, searchBackend, gpuAdapterName, gpuError],
+  );
 
   const toggleToken = (token: string) => {
     setEnabledTokens(prev =>
@@ -89,24 +131,106 @@ export default function CalculatorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [results, lastSearchExact, lastSearchN]);
 
+  const initializeGPU = useCallback(async (
+    force = false,
+  ): Promise<WebGPUConstantRecognizer> => {
+    if (force) {
+      gpuRecognizerRef.current?.destroy();
+      gpuRecognizerRef.current = null;
+    }
+
+    const existing = gpuRecognizerRef.current;
+    if (existing?.isReady()) return existing;
+
+    const pending = gpuInitializationRef.current;
+    if (pending) return pending;
+
+    setGpuChecked(false);
+    setGpuError(null);
+
+    const initialization = (async () => {
+      try {
+        const recognizer = await WebGPUConstantRecognizer.create({
+          basePath: process.env.NEXT_PUBLIC_BASE_PATH,
+          powerPreference: 'high-performance',
+          runSelfTest: true,
+          onDeviceLost: (info) => {
+            if (!mountedRef.current) return;
+            gpuRecognizerRef.current = null;
+            setGpuSupported(false);
+            setGpuChecked(true);
+            setGpuError(
+              `GPU device was lost (${info.reason})${info.message ? `: ${info.message}` : '.'}`,
+            );
+          },
+        });
+
+        if (!mountedRef.current) {
+          recognizer.destroy();
+          throw new Error('The calculator was closed while WebGPU was initializing.');
+        }
+
+        gpuRecognizerRef.current = recognizer;
+        setGpuSupported(true);
+        setGpuChecked(true);
+        setGpuAdapterName(recognizer.info.adapterName);
+        setGpuError(null);
+        return recognizer;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (mountedRef.current) {
+          setGpuSupported(false);
+          setGpuChecked(true);
+          setGpuError(message);
+        }
+        throw error;
+      }
+    })();
+
+    gpuInitializationRef.current = initialization;
+    try {
+      return await initialization;
+    } finally {
+      if (gpuInitializationRef.current === initialization) {
+        gpuInitializationRef.current = null;
+      }
+    }
+  }, []);
+
+  const retryGPU = useCallback(() => {
+    if (searchPhase === 'running') return;
+    void initializeGPU(true).catch(() => {
+      // The exact failure is stored in gpuError and shown in Advanced settings.
+    });
+  }, [initializeGPU, searchPhase]);
+
   // Check for WASM support and detect CPUs
   useEffect(() => {
+    let cancelled = false;
+
     const checkWasm = async () => {
       try {
         //const response = await fetch('/wasm/rpn_function.wasm');
         const response = await fetch(withBasePath('/wasm/rpn_function.wasm'));
-        setWasmLoaded(response.ok);
+        if (!cancelled) setWasmLoaded(response.ok);
       } catch {
-        setWasmLoaded(false);
+        if (!cancelled) setWasmLoaded(false);
       }
     };
-    checkWasm();
+    void checkWasm();
     
     const cpus = navigator.hardwareConcurrency || 4;
     setDetectedCPUs(cpus);
     setThreadCount(cpus);
-    
-  }, []);
+
+    void initializeGPU().catch(() => {
+      // The exact failure is stored in gpuError and shown in Advanced settings.
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initializeGPU]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(max-width: 1023px)');
@@ -126,14 +250,47 @@ export default function CalculatorPage() {
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
 
+  useEffect(() => {
+    if (!['complete', 'partial', 'aborted', 'error'].includes(searchPhase)) return;
+    const frame = window.requestAnimationFrame(() => searchStatusRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [searchPhase]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const runIdRef = searchRunIdRef;
+    return () => {
+      mountedRef.current = false;
+      runIdRef.current++;
+      gpuAbortRef.current?.abort();
+      gpuAbortRef.current = null;
+      gpuRecognizerRef.current?.destroy();
+      gpuRecognizerRef.current = null;
+      workersRef.current.forEach((worker) => worker.terminate());
+      workersRef.current = [];
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
 
   const calculate = async () => {
     if (!inputValue || !hasConstants) return;
 
-    setIsCalculating(true);
+    const zNum = parseFloat(inputValue);
+    if (!Number.isFinite(zNum)) {
+      setSearchError('Enter a finite numeric value before starting the search.');
+      setSearchPhase('error');
+      return;
+    }
+
+    const runId = ++searchRunIdRef.current;
+
+    setSearchPhase('running');
     setResults([]);
-    setSearchFinished(false);
     setTaskProgress(null);
+    setSearchBackend(null);
+    setSearchError(null);
+    setSearchNotice(null);
+    setSearchDetail(null);
     searchEndedRef.current = false;
     isAbortedRef.current = false;
     resolveAllRef.current = null;
@@ -144,10 +301,17 @@ export default function CalculatorPage() {
     timerRef.current = setInterval(() => {
       setElapsedTime(Date.now() - startTimeRef.current);
     }, 500);
+
+    const stopTimer = () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      setElapsedTime(Date.now() - startTimeRef.current);
+    };
     
     // Calculate precision based on error mode
     let deltaZNum: number;
-    const zNum = parseFloat(inputValue);
     
     if (errorMode === 'zero') {
       deltaZNum = 0;
@@ -186,6 +350,103 @@ export default function CalculatorPage() {
     };
     setLastSearchN(selection.consts.length + selection.funcs.length + selection.ops.length);
 
+    const shouldTryGPU = computeEngine === 'gpu' || (
+      computeEngine === 'auto' && (!gpuChecked || gpuSupported)
+    );
+
+    if (shouldTryGPU) {
+      setGpuError(null);
+      const controller = new AbortController();
+      gpuAbortRef.current = controller;
+
+      try {
+        const recognizer = await initializeGPU();
+        if (searchRunIdRef.current !== runId || controller.signal.aborted) {
+          gpuAbortRef.current = null;
+          return;
+        }
+
+        // Do not claim a GPU backend until device creation, shader compilation
+        // and the real dispatch/readback self-test have all succeeded.
+        setSearchBackend('gpu');
+        const summary = await recognizer.search({
+          target: zNum,
+          minK: 1,
+          maxK: searchDepth,
+          calculator: selection,
+          absoluteTolerance: deltaZNum,
+          compressionRatioThreshold: earlyExitCRThreshold,
+          ranking: exactSearch ? 'relative-error' : 'compression-ratio',
+          maxEvaluations: BigInt(100_000_000),
+          maxDurationMs: 30_000,
+          topN: 100,
+          signal: controller.signal,
+          onProgress: (progress: GPUProgress) => {
+            if (searchRunIdRef.current !== runId) return;
+            setTaskProgress({
+              done: Math.min(progress.formIndex + 1, progress.formCount),
+              total: Math.max(progress.formCount, 1),
+              complexityK: progress.K,
+              evaluations: progress.uniqueEvaluations.toLocaleString('en-US'),
+            });
+          },
+        });
+
+        gpuAbortRef.current = null;
+        if (searchRunIdRef.current !== runId || isAbortedRef.current) return;
+
+        const gpuResults: SearchResult[] = summary.results.map((result) => ({
+          cpuId: -1,
+          K: result.K,
+          RPN: result.rpn,
+          result: String(result.value),
+          REL_ERR: result.relativeError,
+          status: result.accepted ? 'SUCCESS' : 'K_BEST',
+          compressionRatio: result.compressionRatio,
+        }));
+
+        const completion = describeGPUCompletion({
+          stopReason: summary.stopReason,
+          completedThroughK: summary.completedThroughK,
+          evaluationCount: summary.uniqueEvaluations.toLocaleString('en-US'),
+          resultCount: gpuResults.length,
+        });
+
+        setResults(gpuResults);
+        setTaskProgress(null);
+        setSearchNotice(null);
+        setSearchDetail(completion.detail);
+        stopTimer();
+        setSearchPhase(completion.phase);
+        return;
+      } catch (error) {
+        gpuAbortRef.current = null;
+        if (searchRunIdRef.current !== runId || isAbortedRef.current) return;
+
+        const message = error instanceof Error ? error.message : String(error);
+        const failedRecognizer = gpuRecognizerRef.current;
+        gpuRecognizerRef.current = null;
+        failedRecognizer?.destroy();
+        setGpuSupported(false);
+        setGpuChecked(true);
+        setGpuError(message);
+
+        if (computeEngine === 'gpu') {
+          setSearchBackend(null);
+          setTaskProgress(null);
+          setSearchError(`GPU search failed: ${message}`);
+          setSearchDetail(null);
+          stopTimer();
+          setSearchPhase('error');
+          return;
+        }
+
+        setSearchNotice(getGPUFallbackNotice());
+      }
+    }
+
+    setSearchBackend('cpu');
+
     // Dynamic load balancing: the search space is over-decomposed into many
     // small slices ("bag of tasks") and idle workers pull the next slice from
     // the queue. The thread count only controls how many workers run
@@ -201,7 +462,7 @@ export default function CalculatorPage() {
     const idlePool: { worker: Worker; workerId: number }[] = []; // parked workers (queue drained)
     const keepRow = createResultFilter();
 
-    setTaskProgress({ done: 0, total: totalTasks });
+    setTaskProgress({ done: 0, total: totalTasks, complexityK: 1 });
 
     const allComplete = new Promise<void>(resolve => {
       resolveAllRef.current = resolve;
@@ -235,6 +496,10 @@ export default function CalculatorPage() {
           ? prev.map(w => (w.id === workerId ? { ...w, currentK: task.maxK } : w))
           : [...prev, running];
       });
+      setTaskProgress(prev => prev ? {
+        ...prev,
+        complexityK: Math.max(prev.complexityK ?? 1, task.maxK),
+      } : prev);
       worker.postMessage({
         z: zNum,
         inputPrecision: deltaZNum,
@@ -312,7 +577,11 @@ export default function CalculatorPage() {
 
       // Task finished without a definitive match — pull the next slice
       remainingTasks--;
-      setTaskProgress({ done: totalTasks - remainingTasks, total: totalTasks });
+      setTaskProgress({
+        done: totalTasks - remainingTasks,
+        total: totalTasks,
+        complexityK: typeof data.K === 'number' ? data.K : undefined,
+      });
       if (remainingTasks <= 0) {
         endSearch();
         return;
@@ -363,21 +632,21 @@ export default function CalculatorPage() {
     // Wait for the task queue to drain (or SUCCESS/abort)
     await allComplete;
     
-    // Stop timer
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    setElapsedTime(Date.now() - startTimeRef.current);
+    stopTimer();
     
     if (!isAbortedRef.current) {
-      setIsCalculating(false);
-      setSearchFinished(true);
+      setTaskProgress(null);
+      setSearchDetail('The CPU/WASM engine completed the selected search space.');
+      setSearchPhase('complete');
     }
   };
 
   const handleAbort = () => {
+    const wasRunning = searchPhase === 'running';
+    searchRunIdRef.current++;
     isAbortedRef.current = true;
+    gpuAbortRef.current?.abort();
+    gpuAbortRef.current = null;
     workersRef.current.forEach(w => w.terminate());
     workersRef.current = [];
     setActiveWorkers([]);
@@ -388,7 +657,12 @@ export default function CalculatorPage() {
       timerRef.current = null;
     }
     setElapsedTime(Date.now() - startTimeRef.current);
-    setIsCalculating(false);
+    setSearchPhase(wasRunning ? 'aborted' : 'idle');
+    setSearchBackend(null);
+    setTaskProgress(null);
+    setSearchDetail(null);
+    setSearchError(null);
+    setSearchNotice(wasRunning ? 'Search stopped. You can adjust the settings and try again.' : null);
   };
 
   const handleReset = () => {
@@ -400,7 +674,11 @@ export default function CalculatorPage() {
     setSortDirection('asc');
     setFilters(defaultFilters);
     setLastSearchExact(false);
-    setSearchFinished(false);
+    setSearchPhase('idle');
+    setSearchError(null);
+    setSearchNotice(null);
+    setSearchDetail(null);
+    setSearchBackend(null);
     setElapsedTime(0);
   };
 
@@ -413,6 +691,13 @@ export default function CalculatorPage() {
       {/* Sidebar */}
       <Sidebar
         wasmLoaded={wasmLoaded}
+        gpuChecked={gpuChecked}
+        gpuSupported={gpuSupported}
+        gpuAdapterName={gpuAdapterName}
+        gpuError={gpuError}
+        onRetryGPU={retryGPU}
+        computeEngine={computeEngine}
+        setComputeEngine={setComputeEngine}
         detectedCPUs={detectedCPUs}
         searchDepth={searchDepth}
         setSearchDepth={setSearchDepth}
@@ -447,35 +732,73 @@ export default function CalculatorPage() {
           canCalculate={hasConstants}
           onCalculate={calculate}
           onReset={handleReset}
-          onAbort={handleAbort}
+          accelerationStatus={accelerationStatus}
         />
 
-        {/* Search Status */}
-        {isCalculating && (
-          <div className="bg-blue-500 text-white py-3 px-4 text-center flex items-center justify-center gap-4">
-            <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-            </svg>
-            <span className="font-bold">Searching for formulas...</span>
-            <span className="font-mono">{(elapsedTime / 1000).toFixed(1)}s</span>
-            {taskProgress && taskProgress.total > 1 && (
-              <span className="font-mono text-sm opacity-75">
-                chunk {taskProgress.done}/{taskProgress.total}
-              </span>
-            )}
-            {precision.deltaZ && (
-              <span className="text-sm opacity-75">(±{precision.deltaZ})</span>
-            )}
+        {searchError && (
+          <div
+            ref={searchPhase === 'error' ? searchStatusRef : undefined}
+            id="search-status-summary"
+            role="alert"
+            tabIndex={-1}
+            className="border-b border-red-200 bg-red-50 px-4 py-2 text-center text-sm text-red-700 outline-none focus:ring-2 focus:ring-inset focus:ring-red-500 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300"
+          >
+            {searchError}
           </div>
         )}
 
-        {results.length > 0 && bestResult ? (
+        {searchNotice && (
+          <div
+            ref={searchPhase === 'aborted' ? searchStatusRef : undefined}
+            id={searchPhase === 'aborted' ? 'search-status-summary' : undefined}
+            role="status"
+            aria-live="polite"
+            tabIndex={searchPhase === 'aborted' ? -1 : undefined}
+            className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-xs text-amber-800 outline-none focus:ring-2 focus:ring-inset focus:ring-amber-500 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300"
+          >
+            {searchNotice}
+          </div>
+        )}
+
+        {isCalculating ? (
+          <SearchProgress
+            backend={searchBackend}
+            elapsedTime={elapsedTime}
+            progress={taskProgress}
+            precision={precision.deltaZ}
+            onAbort={handleAbort}
+          />
+        ) : results.length > 0 && bestResult ? (
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col bg-white dark:bg-[#1a1a1d]">
-            {/* Success banner */}
+            {/* Search summary */}
             {searchFinished && !isCalculating && (
-              <div className="bg-green-500 text-white py-2 px-4 text-center text-sm">
-                Found {results.length} result{results.length !== 1 ? 's' : ''} in {(elapsedTime / 1000).toFixed(2)}s
+              <div
+                ref={searchStatusRef}
+                id="search-status-summary"
+                role="status"
+                aria-live="polite"
+                tabIndex={-1}
+                className={`border-b px-4 py-3 outline-none focus:ring-2 focus:ring-inset ${
+                  searchPhase === 'partial'
+                    ? 'border-amber-200 bg-amber-50 text-amber-900 focus:ring-amber-500 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200'
+                    : 'border-green-200 bg-green-50 text-green-900 focus:ring-green-500 dark:border-green-900/60 dark:bg-green-950/30 dark:text-green-200'
+                }`}
+              >
+                <div className="mx-auto flex max-w-5xl flex-col justify-between gap-1 sm:flex-row sm:items-center sm:gap-4">
+                  <div>
+                    <div className="text-sm font-semibold">
+                      {searchPhase === 'partial'
+                        ? 'Verified results — search limit reached'
+                        : searchBackend === 'gpu'
+                          ? 'GPU accelerated · verified on CPU'
+                          : 'Search complete on CPU'}
+                    </div>
+                    {searchDetail && <p className="mt-0.5 text-xs opacity-80">{searchDetail}</p>}
+                  </div>
+                  <div className="shrink-0 text-xs font-medium sm:text-right">
+                    {results.length} result{results.length !== 1 ? 's' : ''} · {(elapsedTime / 1000).toFixed(2)}s
+                  </div>
+                </div>
               </div>
             )}
             {/* Best result card */}
@@ -496,6 +819,28 @@ export default function CalculatorPage() {
               setSortDirection={setSortDirection}
               instructionCount={lastSearchN}
             />
+          </div>
+        ) : searchFinished ? (
+          <div className="flex flex-1 items-center justify-center px-4 py-8">
+            <div
+              ref={searchStatusRef}
+              id="search-status-summary"
+              role="status"
+              aria-live="polite"
+              tabIndex={-1}
+              className={`w-full max-w-lg rounded-2xl border p-6 text-center outline-none focus:ring-2 sm:p-8 ${
+                searchPhase === 'partial'
+                  ? 'border-amber-200 bg-amber-50 focus:ring-amber-500 dark:border-amber-900/60 dark:bg-amber-950/30'
+                  : 'border-gray-200 bg-white focus:ring-[#0066cc] dark:border-[#2a2a2e] dark:bg-[#202024]'
+              }`}
+            >
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                {searchPhase === 'partial' ? 'Search limit reached' : 'Search complete'}
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-400">
+                {searchDetail ?? 'No matching formulas were found with the selected settings.'}
+              </p>
+            </div>
           </div>
         ) : (
           <EmptyState onExampleClick={handleExampleClick} />

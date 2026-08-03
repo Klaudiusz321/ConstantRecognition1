@@ -3,6 +3,20 @@
 // Error mode for uncertainty handling
 export type ErrorMode = 'zero' | 'automatic' | 'manual' | 'large_errors';
 
+// Compute backend selected in the calculator UI.
+export type ComputeEngine = 'auto' | 'gpu' | 'cpu';
+
+export type SearchBackend = 'gpu' | 'cpu';
+
+export type SearchPhase = 'idle' | 'running' | 'complete' | 'partial' | 'aborted' | 'error';
+
+export interface SearchProgress {
+  done: number;
+  total: number;
+  complexityK?: number;
+  evaluations?: string;
+}
+
 export interface SearchResult {
   cpuId: number;
   K: number;
