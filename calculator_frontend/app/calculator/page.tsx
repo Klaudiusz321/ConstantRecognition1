@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   SearchResult,
   Filters,
@@ -82,6 +82,7 @@ export default function CalculatorPage() {
   const resolveAllRef = useRef<(() => void) | null>(null);
   const searchEndedRef = useRef(false);
   const gpuRecognizerRef = useRef<WebGPUConstantRecognizer | null>(null);
+  const gpuInitializationRef = useRef<Promise<WebGPUConstantRecognizer> | null>(null);
   const gpuAbortRef = useRef<AbortController | null>(null);
   const searchRunIdRef = useRef(0);
   const mountedRef = useRef(true);
@@ -97,8 +98,9 @@ export default function CalculatorPage() {
       phase: searchPhase,
       backend: searchBackend,
       adapterName: gpuAdapterName,
+      error: gpuError,
     }),
-    [gpuChecked, gpuSupported, computeEngine, searchPhase, searchBackend, gpuAdapterName],
+    [gpuChecked, gpuSupported, computeEngine, searchPhase, searchBackend, gpuAdapterName, gpuError],
   );
 
   const toggleToken = (token: string) => {
@@ -129,6 +131,79 @@ export default function CalculatorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [results, lastSearchExact, lastSearchN]);
 
+  const initializeGPU = useCallback(async (
+    force = false,
+  ): Promise<WebGPUConstantRecognizer> => {
+    if (force) {
+      gpuRecognizerRef.current?.destroy();
+      gpuRecognizerRef.current = null;
+    }
+
+    const existing = gpuRecognizerRef.current;
+    if (existing?.isReady()) return existing;
+
+    const pending = gpuInitializationRef.current;
+    if (pending) return pending;
+
+    setGpuChecked(false);
+    setGpuError(null);
+
+    const initialization = (async () => {
+      try {
+        const recognizer = await WebGPUConstantRecognizer.create({
+          basePath: process.env.NEXT_PUBLIC_BASE_PATH,
+          powerPreference: 'high-performance',
+          runSelfTest: true,
+          onDeviceLost: (info) => {
+            if (!mountedRef.current) return;
+            gpuRecognizerRef.current = null;
+            setGpuSupported(false);
+            setGpuChecked(true);
+            setGpuError(
+              `GPU device was lost (${info.reason})${info.message ? `: ${info.message}` : '.'}`,
+            );
+          },
+        });
+
+        if (!mountedRef.current) {
+          recognizer.destroy();
+          throw new Error('The calculator was closed while WebGPU was initializing.');
+        }
+
+        gpuRecognizerRef.current = recognizer;
+        setGpuSupported(true);
+        setGpuChecked(true);
+        setGpuAdapterName(recognizer.info.adapterName);
+        setGpuError(null);
+        return recognizer;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (mountedRef.current) {
+          setGpuSupported(false);
+          setGpuChecked(true);
+          setGpuError(message);
+        }
+        throw error;
+      }
+    })();
+
+    gpuInitializationRef.current = initialization;
+    try {
+      return await initialization;
+    } finally {
+      if (gpuInitializationRef.current === initialization) {
+        gpuInitializationRef.current = null;
+      }
+    }
+  }, []);
+
+  const retryGPU = useCallback(() => {
+    if (searchPhase === 'running') return;
+    void initializeGPU(true).catch(() => {
+      // The exact failure is stored in gpuError and shown in Advanced settings.
+    });
+  }, [initializeGPU, searchPhase]);
+
   // Check for WASM support and detect CPUs
   useEffect(() => {
     let cancelled = false;
@@ -148,50 +223,14 @@ export default function CalculatorPage() {
     setDetectedCPUs(cpus);
     setThreadCount(cpus);
 
-    const checkGPU = async () => {
-      const webGPUAvailable = window.isSecureContext && Boolean(navigator.gpu);
-      if (!webGPUAvailable) {
-        if (cancelled) return;
-        setGpuSupported(false);
-        setGpuChecked(true);
-        setGpuError(
-          window.isSecureContext
-            ? 'This browser or graphics driver does not expose WebGPU.'
-            : 'WebGPU requires HTTPS or localhost.',
-        );
-        return;
-      }
-
-      try {
-        const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-        if (cancelled) return;
-        if (!adapter) {
-          setGpuSupported(false);
-          setGpuError('No compatible WebGPU adapter was returned by the browser.');
-          return;
-        }
-
-        const adapterInfo = adapter.info;
-        setGpuAdapterName(
-          adapterInfo.description || adapterInfo.device || adapterInfo.vendor || 'Compatible GPU',
-        );
-        setGpuSupported(true);
-        setGpuError(null);
-      } catch (error) {
-        if (cancelled) return;
-        setGpuSupported(false);
-        setGpuError(error instanceof Error ? error.message : String(error));
-      } finally {
-        if (!cancelled) setGpuChecked(true);
-      }
-    };
-
-    void checkGPU();
+    void initializeGPU().catch(() => {
+      // The exact failure is stored in gpuError and shown in Advanced settings.
+    });
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initializeGPU]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(max-width: 1023px)');
@@ -232,35 +271,6 @@ export default function CalculatorPage() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
-
-  const getGPURecognizer = async (): Promise<WebGPUConstantRecognizer> => {
-    const existing = gpuRecognizerRef.current;
-    if (existing?.isReady()) return existing;
-
-    try {
-      const recognizer = await WebGPUConstantRecognizer.create({
-        basePath: process.env.NEXT_PUBLIC_BASE_PATH,
-        powerPreference: 'high-performance',
-      });
-      if (!mountedRef.current) {
-        recognizer.destroy();
-        throw new Error('The calculator was closed while WebGPU was initializing.');
-      }
-      gpuRecognizerRef.current = recognizer;
-      setGpuSupported(true);
-      setGpuChecked(true);
-      setGpuAdapterName(recognizer.info.adapterName);
-      setGpuError(null);
-      return recognizer;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setGpuSupported(false);
-      setGpuChecked(true);
-      setGpuError(message);
-      throw error;
-    }
-  };
-
 
   const calculate = async () => {
     if (!inputValue || !hasConstants) return;
@@ -340,22 +350,25 @@ export default function CalculatorPage() {
     };
     setLastSearchN(selection.consts.length + selection.funcs.length + selection.ops.length);
 
-    const shouldTryGPU =
-      computeEngine === 'gpu' || (computeEngine === 'auto' && gpuSupported);
+    const shouldTryGPU = computeEngine === 'gpu' || (
+      computeEngine === 'auto' && (!gpuChecked || gpuSupported)
+    );
 
     if (shouldTryGPU) {
-      setSearchBackend('gpu');
       setGpuError(null);
       const controller = new AbortController();
       gpuAbortRef.current = controller;
 
       try {
-        const recognizer = await getGPURecognizer();
+        const recognizer = await initializeGPU();
         if (searchRunIdRef.current !== runId || controller.signal.aborted) {
           gpuAbortRef.current = null;
           return;
         }
 
+        // Do not claim a GPU backend until device creation, shader compilation
+        // and the real dispatch/readback self-test have all succeeded.
+        setSearchBackend('gpu');
         const summary = await recognizer.search({
           target: zNum,
           minK: 1,
@@ -411,13 +424,23 @@ export default function CalculatorPage() {
         if (searchRunIdRef.current !== runId || isAbortedRef.current) return;
 
         const message = error instanceof Error ? error.message : String(error);
+        const failedRecognizer = gpuRecognizerRef.current;
+        gpuRecognizerRef.current = null;
+        failedRecognizer?.destroy();
+        setGpuSupported(false);
+        setGpuChecked(true);
         setGpuError(message);
-        if (gpuRecognizerRef.current && !gpuRecognizerRef.current.isReady()) {
-          gpuRecognizerRef.current = null;
-          setGpuSupported(false);
+
+        if (computeEngine === 'gpu') {
+          setSearchBackend(null);
+          setTaskProgress(null);
+          setSearchError(`GPU search failed: ${message}`);
+          setSearchDetail(null);
+          stopTimer();
+          setSearchPhase('error');
+          return;
         }
 
-        if (computeEngine === 'gpu') setComputeEngine('auto');
         setSearchNotice(getGPUFallbackNotice());
       }
     }
@@ -672,6 +695,7 @@ export default function CalculatorPage() {
         gpuSupported={gpuSupported}
         gpuAdapterName={gpuAdapterName}
         gpuError={gpuError}
+        onRetryGPU={retryGPU}
         computeEngine={computeEngine}
         setComputeEngine={setComputeEngine}
         detectedCPUs={detectedCPUs}

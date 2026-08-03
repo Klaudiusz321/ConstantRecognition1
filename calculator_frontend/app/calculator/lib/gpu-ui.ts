@@ -16,6 +16,7 @@ interface AccelerationStatusInput {
   phase: SearchPhase;
   backend: SearchBackend | null;
   adapterName: string | null;
+  error?: string | null;
 }
 
 export function formatGPUAdapterName(adapterName: string | null): string | null {
@@ -28,6 +29,12 @@ export function formatGPUAdapterName(adapterName: string | null): string | null 
   return trimmed;
 }
 
+export function formatGPUError(error: string | null | undefined): string | null {
+  if (!error) return null;
+  const normalized = error.replace(/\s+/g, ' ').trim();
+  return normalized || null;
+}
+
 export function getAccelerationStatus({
   checked,
   supported,
@@ -35,6 +42,7 @@ export function getAccelerationStatus({
   phase,
   backend,
   adapterName,
+  error,
 }: AccelerationStatusInput): AccelerationStatus {
   const friendlyAdapter = formatGPUAdapterName(adapterName);
 
@@ -74,25 +82,25 @@ export function getAccelerationStatus({
 
   if (!checked) {
     return {
-      label: 'Checking GPU acceleration',
-      description: 'The calculator is checking whether a compatible graphics processor is available.',
+      label: 'Testing GPU acceleration',
+      description: 'The calculator is running a short shader, dispatch and readback self-test.',
       tone: 'neutral',
     };
   }
 
   if (supported) {
     return {
-      label: 'GPU acceleration ready',
+      label: 'GPU tested and ready',
       description: friendlyAdapter
-        ? `${friendlyAdapter} will be used automatically, with CPU verification.`
-        : 'A compatible GPU will be used automatically, with CPU verification.',
+        ? `${friendlyAdapter} passed the compute self-test and will be used with CPU verification.`
+        : 'A compatible GPU passed the compute self-test and will be used with CPU verification.',
       tone: 'positive',
     };
   }
 
   return {
-    label: 'CPU mode',
-    description: 'GPU acceleration is unavailable, so searches will run on the CPU.',
+    label: 'GPU unavailable',
+    description: formatGPUError(error) ?? 'GPU acceleration is unavailable, so Auto mode will use the CPU.',
     tone: 'warning',
   };
 }

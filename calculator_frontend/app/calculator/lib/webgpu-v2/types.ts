@@ -22,11 +22,21 @@ export interface RpnForm {
 export interface GPURecognizerInfo {
   readonly supported: boolean;
   readonly adapterName: string;
+  /** True only after a real compute dispatch and readback succeeded. */
+  readonly selfTestPassed: boolean;
+  readonly selfTestElapsedMs: number;
   readonly workgroupSize: number;
   readonly maxWorkgroupsPerDimension: number;
   readonly maxStorageBufferBindingSize: number;
   readonly maxBufferSize: number;
   readonly error?: string;
+}
+
+export interface GPUSelfTestSummary {
+  readonly elapsedMs: number;
+  readonly uniqueEvaluations: bigint;
+  readonly dispatchedEvaluations: bigint;
+  readonly resultValue: number;
 }
 
 export type SearchStopReason =

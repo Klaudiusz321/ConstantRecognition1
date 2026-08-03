@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   describeGPUCompletion,
   formatGPUAdapterName,
+  formatGPUError,
   getAccelerationStatus,
   getGPUFallbackNotice,
 } from '../app/calculator/lib/gpu-ui';
@@ -16,7 +17,7 @@ describe('GPU interface state', () => {
       backend: null,
       adapterName: null,
     })).toMatchObject({
-      label: 'CPU mode',
+      label: 'GPU unavailable',
       tone: 'warning',
     });
   });
@@ -31,8 +32,8 @@ describe('GPU interface state', () => {
       backend: null,
       adapterName: 'nvidia',
     })).toEqual({
-      label: 'GPU acceleration ready',
-      description: 'NVIDIA GPU will be used automatically, with CPU verification.',
+      label: 'GPU tested and ready',
+      description: 'NVIDIA GPU passed the compute self-test and will be used with CPU verification.',
       tone: 'positive',
     });
   });
@@ -130,5 +131,24 @@ describe('GPU interface state', () => {
     const notice = getGPUFallbackNotice();
     expect(notice).toContain('continued safely on the CPU');
     expect(notice).not.toContain('WebGPU');
+  });
+
+  it('shows the real initialization failure instead of a generic ready state', () => {
+    expect(formatGPUError('GPU compute self-test failed:\n validation error'))
+      .toBe('GPU compute self-test failed: validation error');
+
+    expect(getAccelerationStatus({
+      checked: true,
+      supported: false,
+      engine: 'auto',
+      phase: 'idle',
+      backend: null,
+      adapterName: 'nvidia',
+      error: 'Cannot load GPU shader (404 Not Found).',
+    })).toMatchObject({
+      label: 'GPU unavailable',
+      description: 'Cannot load GPU shader (404 Not Found).',
+      tone: 'warning',
+    });
   });
 });

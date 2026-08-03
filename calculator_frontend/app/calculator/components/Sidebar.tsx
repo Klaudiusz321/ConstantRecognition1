@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import Image from 'next/image';
 import { ActiveWorker, Precision, ErrorMode, ComputeEngine } from '../lib/types';
-import { formatGPUAdapterName } from '../lib/gpu-ui';
+import { formatGPUAdapterName, formatGPUError } from '../lib/gpu-ui';
 import { getCalculatorById, DEFAULT_CALCULATOR_ID } from '../lib/calculators';
 import { CalculatorPalette } from './CalculatorPalette';
 
@@ -12,6 +13,7 @@ interface SidebarProps {
   gpuSupported: boolean;
   gpuAdapterName: string | null;
   gpuError: string | null;
+  onRetryGPU: () => void;
   computeEngine: ComputeEngine;
   setComputeEngine: (engine: ComputeEngine) => void;
   detectedCPUs: number;
@@ -47,6 +49,7 @@ export function Sidebar({
   gpuSupported,
   gpuAdapterName,
   gpuError,
+  onRetryGPU,
   computeEngine,
   setComputeEngine,
   detectedCPUs,
@@ -85,6 +88,7 @@ export function Sidebar({
     : 'Ignored for exact search (± 0). Use Auto or Manual uncertainty to enable it.';
   const noConstants = !enabledTokens.some((t) => calculator.constantsCore.includes(t) || calculator.constantsRedundant.includes(t));
   const friendlyAdapterName = formatGPUAdapterName(gpuAdapterName);
+  const friendlyGPUError = formatGPUError(gpuError);
 
   return (
     <>
@@ -127,9 +131,11 @@ export function Sidebar({
         <div className="p-4 border-b border-gray-200 dark:border-[#2a2a2e]">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <img
+              <Image
                 src="/cdaaebfdc71641160f831c2a2fb564ce8d081055.png"
                 alt="Logo"
+                width={40}
+                height={40}
                 className="w-10 h-10 rounded-lg object-cover"
               />
               <div>
@@ -171,9 +177,14 @@ export function Sidebar({
                 !gpuChecked ? 'bg-gray-400' : gpuSupported ? 'bg-green-500' : 'bg-amber-500'
               }`} aria-hidden="true" />
               <span className="text-gray-700 dark:text-gray-300">
-                {!gpuChecked ? 'Checking acceleration...' : gpuSupported ? 'GPU acceleration ready' : 'CPU mode'}
+                {!gpuChecked ? 'Testing GPU acceleration...' : gpuSupported ? 'GPU tested and ready' : 'GPU unavailable'}
               </span>
             </div>
+            {gpuChecked && !gpuSupported && friendlyGPUError && (
+              <p role="status" className="break-words text-[11px] leading-4 text-amber-700 dark:text-amber-300">
+                {friendlyGPUError}
+              </p>
+            )}
             <div className="text-sm lg:text-xs text-gray-500 dark:text-gray-500">
               {detectedCPUs} logical CPUs detected
             </div>
@@ -363,14 +374,24 @@ export function Sidebar({
                   ))}
                 </div>
                 <div className="rounded-lg bg-gray-50 p-3 text-[11px] leading-5 text-gray-500 dark:bg-[#111113] dark:text-gray-400">
-                  {friendlyAdapterName ? (
+                  {gpuSupported && friendlyAdapterName ? (
                     <span>Graphics processor: <strong className="font-medium text-gray-700 dark:text-gray-300">{friendlyAdapterName}</strong></span>
                   ) : gpuSupported ? (
-                    <span>A compatible graphics processor is available.</span>
+                    <span>A compatible graphics processor passed the compute self-test.</span>
                   ) : (
-                    <span title={gpuError ?? undefined}>GPU acceleration is unavailable. Searches will use CPU mode.</span>
+                    <span className="break-words">
+                      GPU acceleration is unavailable. {friendlyGPUError ?? 'Auto mode will use CPU/WASM.'}
+                    </span>
                   )}
                 </div>
+                <button
+                  type="button"
+                  onClick={onRetryGPU}
+                  disabled={isCalculating || !gpuChecked}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#2a2a2e] dark:text-gray-300 dark:hover:bg-[#222226]"
+                >
+                  {!gpuChecked ? 'Testing GPU...' : gpuSupported ? 'Run GPU test again' : 'Retry GPU test'}
+                </button>
               </fieldset>
 
               {/* Uncertainty Mode */}

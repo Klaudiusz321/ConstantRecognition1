@@ -25,6 +25,7 @@ import {
   digitsToIndex,
   indexToDigits,
 } from '../app/calculator/lib/webgpu-v2/mixed-radix';
+import { assertGPUSelfTestEvidence } from '../app/calculator/lib/webgpu-v2/webgpu-engine';
 import { FormTokenKind } from '../app/calculator/lib/webgpu-v2/types';
 
 const EXPECTED_FORM_COUNTS = [1, 1, 2, 4, 9, 21, 51, 127, 323];
@@ -204,5 +205,51 @@ describe('WGSL regression guards', () => {
 
   it('reports candidate-buffer overflow instead of silently truncating', () => {
     expect(shader).toContain('atomicStore(&state.overflow, 1u)');
+  });
+});
+
+describe('WebGPU readiness self-test', () => {
+  it('requires proof of dispatch, readback and the expected PI result', () => {
+    expect(assertGPUSelfTestEvidence({
+      uniqueEvaluations: BigInt(1),
+      dispatchedEvaluations: BigInt(1),
+      results: [{
+        rpn: 'PI',
+        accepted: true,
+        value: Math.PI,
+        gpuValue: Math.fround(Math.PI),
+        gpuRelativeError: 0,
+      }],
+    })).toBe(Math.PI);
+
+    expect(() => assertGPUSelfTestEvidence({
+      uniqueEvaluations: BigInt(1),
+      dispatchedEvaluations: BigInt(0),
+      results: [{
+        rpn: 'PI',
+        accepted: true,
+        value: Math.PI,
+        gpuValue: Math.fround(Math.PI),
+        gpuRelativeError: 0,
+      }],
+    })).toThrow(/unexpected readback/i);
+
+    expect(() => assertGPUSelfTestEvidence({
+      uniqueEvaluations: BigInt(1),
+      dispatchedEvaluations: BigInt(1),
+      results: [],
+    })).toThrow(/cpu=missing/i);
+
+    expect(() => assertGPUSelfTestEvidence({
+      uniqueEvaluations: BigInt(1),
+      dispatchedEvaluations: BigInt(1),
+      results: [{
+        rpn: 'PI',
+        accepted: true,
+        value: Math.PI,
+        gpuValue: 0,
+        gpuRelativeError: 1,
+      }],
+    })).toThrow(/gpu=0/i);
   });
 });

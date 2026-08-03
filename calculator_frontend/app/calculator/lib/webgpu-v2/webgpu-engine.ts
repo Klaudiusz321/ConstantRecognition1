@@ -14,6 +14,7 @@ import {
   type GPURecognizerInfo,
   type GPUProgress,
   type GPURanking,
+  type GPUSelfTestSummary,
   type GPUSearchRequest,
   type GPUSearchSummary,
   type RawGPUCandidate,
@@ -36,6 +37,7 @@ const DEFAULT_GROUP_BEST_TO_VERIFY = 32;
 const DEFAULT_TOP_N = 100;
 const DEFAULT_CR_THRESHOLD = 1.05;
 const F32_EPSILON = 2 ** -23;
+const SELF_TEST_TIMEOUT_MS = 5_000;
 
 interface GPUResources {
   readonly candidateCapacity: number;
@@ -122,6 +124,51 @@ export interface WebGPURecognizerCreateOptions {
   readonly shaderUrl?: string;
   readonly basePath?: string;
   readonly powerPreference?: GPUPowerPreference;
+  /** Run a real compute dispatch and readback before reporting the GPU as ready. */
+  readonly runSelfTest?: boolean;
+  readonly onDeviceLost?: (info: GPUDeviceLostInfo) => void;
+}
+
+export interface GPUSelfTestEvidence {
+  readonly uniqueEvaluations: bigint;
+  readonly dispatchedEvaluations: bigint;
+  readonly results: readonly {
+    readonly rpn: string;
+    readonly accepted: boolean;
+    readonly value: number;
+    readonly gpuValue: number;
+    readonly gpuRelativeError: number;
+  }[];
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function stageError(stage: string, error: unknown): Error {
+  return new Error(`${stage}: ${errorMessage(error)}`);
+}
+
+export function assertGPUSelfTestEvidence(evidence: GPUSelfTestEvidence): number {
+  const piResult = evidence.results.find(
+    (result) => result.rpn === 'PI' && result.accepted,
+  );
+  if (
+    evidence.uniqueEvaluations !== BigInt(1) ||
+    evidence.dispatchedEvaluations < BigInt(1) ||
+    !piResult ||
+    piResult.value !== Math.PI ||
+    Math.abs(piResult.gpuValue - Math.fround(Math.PI)) > 8 * F32_EPSILON ||
+    piResult.gpuRelativeError > 8 * F32_EPSILON
+  ) {
+    throw new Error(
+      `Unexpected readback (evaluated=${evidence.uniqueEvaluations.toString()}, ` +
+      `dispatched=${evidence.dispatchedEvaluations.toString()}, ` +
+      `cpu=${piResult?.value ?? 'missing'}, ` +
+      `gpu=${piResult?.gpuValue ?? 'missing'}).`,
+    );
+  }
+  return piResult.value;
 }
 
 /**
@@ -134,107 +181,223 @@ export class WebGPUConstantRecognizer {
   private resources: GPUResources | null = null;
   private running = false;
   private destroyed = false;
+  private infoState: GPURecognizerInfo;
 
   private constructor(
     private readonly device: GPUDevice,
     private readonly pipeline: GPUComputePipeline,
-    readonly info: GPURecognizerInfo,
+    info: GPURecognizerInfo,
+    onDeviceLost?: (info: GPUDeviceLostInfo) => void,
   ) {
-    void device.lost.then(() => {
+    this.infoState = info;
+    void device.lost.then((lostInfo) => {
       this.destroyed = true;
       this.resources = null;
+      if (lostInfo.reason !== 'destroyed') onDeviceLost?.(lostInfo);
     });
+  }
+
+  get info(): GPURecognizerInfo {
+    return this.infoState;
   }
 
   static async create(
     options: WebGPURecognizerCreateOptions = {},
   ): Promise<WebGPUConstantRecognizer> {
+    if (typeof window !== 'undefined' && !window.isSecureContext) {
+      throw new Error('WebGPU requires HTTPS or localhost.');
+    }
     if (typeof navigator === 'undefined' || !navigator.gpu) {
-      throw new Error('WebGPU is unavailable. Use a secure context and a WebGPU-capable browser.');
+      throw new Error('This browser or graphics driver does not expose WebGPU.');
     }
 
-    const adapter = await navigator.gpu.requestAdapter({
-      powerPreference: options.powerPreference ?? 'high-performance',
-    });
+    const powerPreference = options.powerPreference ?? 'high-performance';
+    let adapter: GPUAdapter | null;
+    try {
+      adapter = await navigator.gpu.requestAdapter({ powerPreference });
+      // Some hybrid-GPU systems reject an explicit preference even though a
+      // default adapter is usable. Retry once without the hint.
+      if (!adapter) adapter = await navigator.gpu.requestAdapter();
+    } catch (error) {
+      throw stageError('GPU adapter request failed', error);
+    }
     if (!adapter) throw new Error('No WebGPU adapter was returned.');
 
-    const device = await adapter.requestDevice();
+    let device: GPUDevice;
+    try {
+      device = await adapter.requestDevice();
+    } catch (error) {
+      throw stageError('GPU device creation failed', error);
+    }
+
+    const failAndDestroy = (error: unknown): never => {
+      device.destroy();
+      throw error;
+    };
+
     const maxInvocations = Number(device.limits.maxComputeInvocationsPerWorkgroup);
     const maxSizeX = Number(device.limits.maxComputeWorkgroupSizeX);
     if (maxInvocations < WORKGROUP_SIZE || maxSizeX < WORKGROUP_SIZE) {
-      device.destroy();
-      throw new Error(
+      failAndDestroy(new Error(
         `The selected adapter supports only ${Math.min(maxInvocations, maxSizeX)} ` +
         `threads per workgroup; ${WORKGROUP_SIZE} are required by the shader.`,
-      );
+      ));
     }
     const requiredWorkgroupBytes = WORKGROUP_SIZE * 4 * 4;
     if (Number(device.limits.maxComputeWorkgroupStorageSize) < requiredWorkgroupBytes) {
-      device.destroy();
-      throw new Error(`The shader requires ${requiredWorkgroupBytes} bytes of workgroup storage.`);
+      failAndDestroy(new Error(`The shader requires ${requiredWorkgroupBytes} bytes of workgroup storage.`));
     }
     if (Number(device.limits.maxStorageBuffersPerShaderStage) < 4) {
-      device.destroy();
-      throw new Error('The shader requires four storage-buffer bindings.');
+      failAndDestroy(new Error('The shader requires four storage-buffer bindings.'));
     }
 
     const shaderUrl = resolveShaderUrl(
       options.shaderUrl ?? '/wasm/constant-recognition-v2.wgsl',
       options.basePath ?? '',
     );
-    const response = await fetch(shaderUrl);
+    const response = await fetch(shaderUrl).catch((error: unknown) =>
+      failAndDestroy(stageError('GPU shader download failed', error)),
+    );
     if (!response.ok) {
-      device.destroy();
-      throw new Error(`Cannot load WebGPU shader (${response.status} ${response.statusText}).`);
+      failAndDestroy(new Error(
+        `Cannot load GPU shader ${shaderUrl} (${response.status} ${response.statusText}).`,
+      ));
     }
-    const shaderCode = await response.text();
+    const shaderCode = await response.text().catch((error: unknown) =>
+      failAndDestroy(stageError('GPU shader response could not be read', error)),
+    );
     if (/^\s*</.test(shaderCode)) {
-      device.destroy();
-      throw new Error('Shader URL returned HTML instead of WGSL.');
+      failAndDestroy(new Error(`GPU shader URL ${shaderUrl} returned HTML instead of WGSL.`));
     }
 
     const shaderModule = device.createShaderModule({
       label: 'Constant Recognition FP32 screening shader',
       code: shaderCode,
     });
-    const compilation = await shaderModule.getCompilationInfo();
+    const compilation = await shaderModule.getCompilationInfo().catch((error: unknown) =>
+      failAndDestroy(stageError('WGSL compilation diagnostics failed', error)),
+    );
     const errors = compilation.messages.filter((message) => message.type === 'error');
     if (errors.length > 0) {
-      device.destroy();
       const details = errors
         .map((message) => `line ${message.lineNum}:${message.linePos} ${message.message}`)
         .join('\n');
-      throw new Error(`WGSL compilation failed:\n${details}`);
+      failAndDestroy(new Error(`WGSL compilation failed:\n${details}`));
     }
 
+    device.pushErrorScope('validation');
     const pipeline = await device.createComputePipelineAsync({
       label: 'Constant Recognition search pipeline',
       layout: 'auto',
       compute: { module: shaderModule, entryPoint: 'search' },
-    });
+    }).catch((error: unknown) =>
+      // If pipeline creation itself threw, device destruction safely discards
+      // the still-active validation scope.
+      failAndDestroy(stageError('GPU pipeline creation failed', error)),
+    );
+    const pipelineValidationError = await device.popErrorScope().catch((error: unknown) =>
+      failAndDestroy(stageError('GPU pipeline validation failed', error)),
+    );
+    if (pipelineValidationError) {
+      failAndDestroy(new Error(
+        `GPU pipeline validation failed: ${pipelineValidationError.message}`,
+      ));
+    }
 
     const adapterInfo = adapter.info;
     const adapterName = adapterInfo.description || adapterInfo.device || adapterInfo.vendor || 'WebGPU adapter';
 
-    return new WebGPUConstantRecognizer(device, pipeline, {
+    const recognizer = new WebGPUConstantRecognizer(device, pipeline, {
       supported: true,
       adapterName,
+      selfTestPassed: false,
+      selfTestElapsedMs: 0,
       workgroupSize: WORKGROUP_SIZE,
       maxWorkgroupsPerDimension: Number(device.limits.maxComputeWorkgroupsPerDimension),
       maxStorageBufferBindingSize: Number(device.limits.maxStorageBufferBindingSize),
       maxBufferSize: Number(device.limits.maxBufferSize),
-    });
+    }, options.onDeviceLost);
+
+    if (options.runSelfTest ?? true) {
+      try {
+        await recognizer.runSelfTest();
+      } catch (error) {
+        recognizer.destroy();
+        throw stageError('GPU compute self-test failed', error);
+      }
+    }
+
+    return recognizer;
   }
 
   isReady(): boolean {
-    return !this.destroyed;
+    return !this.destroyed && this.infoState.selfTestPassed;
   }
 
   destroy(): void {
     if (this.destroyed) return;
+    this.destroyed = true;
     this.destroyResources();
     this.device.destroy();
-    this.destroyed = true;
+  }
+
+  /**
+   * Exercise the production search pipeline with one known expression (PI).
+   * Readiness is reported only when command submission, shader execution,
+   * buffer readback and CPU verification all agree.
+   */
+  async runSelfTest(): Promise<GPUSelfTestSummary> {
+    if (this.destroyed) throw new Error('The WebGPU recognizer has been destroyed.');
+
+    this.device.pushErrorScope('validation');
+    let summary: GPUSearchSummary | null = null;
+    let operationError: unknown = null;
+    try {
+      summary = await this.search({
+        target: Math.PI,
+        minK: 1,
+        maxK: 1,
+        calculator: { consts: ['PI'], funcs: [], ops: [] },
+        screeningRelativeError: 1e-5,
+        exactRelativeTolerance: 16 * Number.EPSILON,
+        topN: 1,
+        candidateCapacity: 8,
+        tileInvocations: 1,
+        groupBestToVerify: 1,
+        maxEvaluations: BigInt(1),
+        maxDurationMs: SELF_TEST_TIMEOUT_MS,
+        stopAfterFirstAcceptedK: true,
+      });
+      await this.device.queue.onSubmittedWorkDone();
+    } catch (error) {
+      operationError = error;
+    }
+
+    let validationError: GPUError | null = null;
+    try {
+      validationError = await this.device.popErrorScope();
+    } catch (error) {
+      operationError ??= error;
+    }
+
+    if (operationError) throw operationError;
+    if (validationError) throw new Error(validationError.message);
+    if (!summary) throw new Error('The self-test returned no summary.');
+
+    const resultValue = assertGPUSelfTestEvidence(summary);
+
+    this.infoState = {
+      ...this.infoState,
+      selfTestPassed: true,
+      selfTestElapsedMs: summary.elapsedMs,
+    };
+
+    return {
+      elapsedMs: summary.elapsedMs,
+      uniqueEvaluations: summary.uniqueEvaluations,
+      dispatchedEvaluations: summary.dispatchedEvaluations,
+      resultValue,
+    };
   }
 
   async search(request: GPUSearchRequest): Promise<GPUSearchSummary> {
