@@ -90,10 +90,8 @@ export function getAccelerationStatus({
 
   if (supported) {
     return {
-      label: 'GPU tested and ready',
-      description: friendlyAdapter
-        ? `${friendlyAdapter} passed the compute self-test and will be used with CPU verification.`
-        : 'A compatible GPU passed the compute self-test and will be used with CPU verification.',
+      label: '',
+      description: '',
       tone: 'positive',
     };
   }
