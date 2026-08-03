@@ -172,16 +172,19 @@ export function Sidebar({
               <div className={`w-3 h-3 lg:w-2 lg:h-2 rounded-full ${wasmLoaded ? 'bg-green-500' : 'bg-amber-500'}`} aria-hidden="true" />
               <span className="text-gray-700 dark:text-gray-300">{wasmLoaded ? 'WASM Ready' : 'Demo Mode'}</span>
             </div>
-            {(!gpuChecked || !gpuSupported) && (
-              <div className="flex items-center gap-2 text-base lg:text-sm">
-                <div className={`w-3 h-3 lg:w-2 lg:h-2 rounded-full ${
-                  !gpuChecked ? 'bg-gray-400' : 'bg-amber-500'
-                }`} aria-hidden="true" />
+            <div
+              className="flex items-center gap-2 text-base lg:text-sm"
+              aria-label={gpuChecked && gpuSupported ? 'GPU acceleration ready' : undefined}
+            >
+              <div className={`w-3 h-3 lg:w-2 lg:h-2 rounded-full ${
+                !gpuChecked ? 'bg-gray-400' : gpuSupported ? 'bg-green-500' : 'bg-amber-500'
+              }`} aria-hidden="true" />
+              {(!gpuChecked || !gpuSupported) && (
                 <span className="text-gray-700 dark:text-gray-300">
                   {!gpuChecked ? 'Testing GPU acceleration...' : 'GPU unavailable'}
                 </span>
-              </div>
-            )}
+              )}
+            </div>
             {gpuChecked && !gpuSupported && friendlyGPUError && (
               <p role="status" className="break-words text-[11px] leading-4 text-amber-700 dark:text-amber-300">
                 {friendlyGPUError}
