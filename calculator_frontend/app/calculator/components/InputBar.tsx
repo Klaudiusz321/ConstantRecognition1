@@ -79,31 +79,33 @@ export function InputBar({
             )}
           </div>
         </div>
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <div
-            className={`inline-flex min-w-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${statusClasses}`}
-            role="status"
-            aria-live="polite"
-            title={accelerationStatus.description}
-          >
-            <span
-              className={`h-2 w-2 shrink-0 rounded-full ${
-                accelerationStatus.tone === 'active'
-                  ? 'bg-blue-500 motion-safe:animate-pulse'
-                  : accelerationStatus.tone === 'positive'
-                    ? 'bg-green-500'
-                    : accelerationStatus.tone === 'warning'
-                      ? 'bg-amber-500'
-                      : 'bg-gray-400'
-              }`}
-              aria-hidden="true"
-            />
-            <span className="truncate">{accelerationStatus.label}</span>
+        {accelerationStatus.label && (
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <div
+              className={`inline-flex min-w-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${statusClasses}`}
+              role="status"
+              aria-live="polite"
+              title={accelerationStatus.description}
+            >
+              <span
+                className={`h-2 w-2 shrink-0 rounded-full ${
+                  accelerationStatus.tone === 'active'
+                    ? 'bg-blue-500 motion-safe:animate-pulse'
+                    : accelerationStatus.tone === 'positive'
+                      ? 'bg-green-500'
+                      : accelerationStatus.tone === 'warning'
+                        ? 'bg-amber-500'
+                        : 'bg-gray-400'
+                }`}
+                aria-hidden="true"
+              />
+              <span className="truncate">{accelerationStatus.label}</span>
+            </div>
+            <span className="hidden truncate text-xs text-gray-500 dark:text-gray-500 md:block">
+              {accelerationStatus.description}
+            </span>
           </div>
-          <span className="hidden truncate text-xs text-gray-500 dark:text-gray-500 md:block">
-            {accelerationStatus.description}
-          </span>
-        </div>
+        )}
       </div>
     </div>
   );

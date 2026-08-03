@@ -22,7 +22,7 @@ describe('GPU interface state', () => {
     });
   });
 
-  it('shows GPU readiness and formats common adapter names', () => {
+  it('keeps the idle UI quiet after GPU readiness is confirmed', () => {
     expect(formatGPUAdapterName('nvidia')).toBe('NVIDIA GPU');
     expect(getAccelerationStatus({
       checked: true,
@@ -32,8 +32,8 @@ describe('GPU interface state', () => {
       backend: null,
       adapterName: 'nvidia',
     })).toEqual({
-      label: 'GPU tested and ready',
-      description: 'NVIDIA GPU passed the compute self-test and will be used with CPU verification.',
+      label: '',
+      description: '',
       tone: 'positive',
     });
   });
