@@ -23,6 +23,18 @@ interface InputBarProps {
   onOpenWizard: () => void;
 }
 
+export function hasBlockingDatasetError(
+  searchMode: SearchMode,
+  functionDatasetError: string | null | undefined,
+  multipleDatasetError: string | null | undefined,
+): boolean {
+  return searchMode === 'function'
+    ? Boolean(functionDatasetError)
+    : searchMode === 'multiple'
+      ? Boolean(multipleDatasetError)
+      : false;
+}
+
 export function InputBar({
   inputValue,
   setInputValue,
@@ -150,8 +162,7 @@ export function InputBar({
                 (searchMode === 'constant' && !inputValue) ||
                 isCalculating ||
                 !canCalculate ||
-                Boolean(functionDatasetError) ||
-                Boolean(multipleDatasetError)
+                hasBlockingDatasetError(searchMode, functionDatasetError, multipleDatasetError)
               }
               title={canCalculate ? undefined : 'Enable at least one constant in the calculator palette'}
               className="flex-1 sm:flex-none px-6 py-3 bg-[#0066cc] hover:bg-[#0052a3] disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed"
