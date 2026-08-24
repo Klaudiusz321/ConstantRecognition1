@@ -271,9 +271,13 @@ static double compute_function_error(
         double computed = evaluate_expression(ternary, indices, K, const_ops, n_const, unary_ops, binary_ops, MODE_FUNCTION, data[i].x);
         if (isnan(computed) || isinf(computed)) { error += 1e10; valid++; continue; }
         double diff = computed - data[i].y;
-        double abs_diff = fabs(diff);
+        /* dy is an optional scientific uncertainty. When supplied, evaluate
+           residuals in units of that uncertainty; dy=0 preserves raw errors. */
+        double scale = data[i].dy > 0.0 ? data[i].dy : 1.0;
+        double scaled_diff = diff / scale;
+        double abs_diff = fabs(scaled_diff);
         switch (metric) {
-            case ERROR_MSE: error += diff * diff; break;
+            case ERROR_MSE: error += scaled_diff * scaled_diff; break;
             case ERROR_MAE: case ERROR_ABS: error += abs_diff; break;
             case ERROR_MAX: if (abs_diff > max_err) max_err = abs_diff; break;
             case ERROR_REL: error += (data[i].y == 0.0) ? abs_diff : fabs(computed/data[i].y - 1.0); break;
@@ -377,7 +381,7 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
                 st->json_remaining -= w;
                 st->result_count++;
                 
-                if (err < 1e-12) {
+                if (err <= 1e-12) {
                     st->stop_search = 1;
                     return 1;
                 }
@@ -630,7 +634,7 @@ char* vsearch_core(
     if (mode == MODE_FUNCTION) {
         char code[512];
         format_code(st.func_best_ternary, st.func_best_indices, st.func_best_K, const_ops, unary_ops, binary_ops, MODE_FUNCTION, code, sizeof(code));
-        const char* result_type = (st.func_best_err < 1e-12) ? "SUCCESS" : "FAILURE";
+        const char* result_type = (st.func_best_err <= 1e-12) ? "SUCCESS" : "FAILURE";
         w = snprintf(st.json_ptr, st.json_remaining,
             "],\n \"result\":\"%s\", \"RPN\":\"%s\", \"REL_ERR\":%.17e, "
             "\"K\":%d, \"status\":\"FINISHED\", "

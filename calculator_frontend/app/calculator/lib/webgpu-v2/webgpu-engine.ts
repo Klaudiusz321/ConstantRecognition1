@@ -1,8 +1,11 @@
 
 import {
   compileCalculator,
+  FULL_CALC4,
   type CompiledCalculator,
 } from './calculator';
+import { functionMeanSquaredError } from '../search-contract';
+import type { FunctionPoint } from '../types';
 import { absoluteError, evaluateCoreRPN, relativeError } from './cpu-verifier';
 import { countValidForms, iterateValidForms } from './forms';
 import { getCompressionRatio, isAcceptedCandidate } from './metrics';
@@ -24,8 +27,9 @@ import {
 } from './types';
 
 const WORKGROUP_SIZE = 256;
-const PARAM_BYTES = 48;
+const PARAM_BYTES = 64;
 const STATE_BYTES = 16;
+const DATA_POINT_BYTES = 16;
 const FORM_WORDS = MAX_GPU_K * 3 + MAX_OPS_PER_KIND * 3;
 const FORM_BYTES = FORM_WORDS * 4;
 const DEFAULT_CANDIDATE_CAPACITY = 65_536;
@@ -42,11 +46,13 @@ const SELF_TEST_TIMEOUT_MS = 5_000;
 interface GPUResources {
   readonly candidateCapacity: number;
   readonly groupCapacity: number;
+  readonly dataCapacity: number;
   readonly params: GPUBuffer;
   readonly form: GPUBuffer;
   readonly candidates: GPUBuffer;
   readonly state: GPUBuffer;
   readonly groupBest: GPUBuffer;
+  readonly dataPoints: GPUBuffer;
   readonly candidateReadback: GPUBuffer;
   readonly stateReadback: GPUBuffer;
   readonly groupReadback: GPUBuffer;
@@ -63,11 +69,13 @@ interface TileContext {
   readonly targetF32: number;
   readonly screeningRelativeError: number;
   readonly calculator: CompiledCalculator;
+  readonly functionPoints: readonly FunctionPoint[] | null;
   readonly candidateCapacity: number;
   readonly groupBestToVerify: number;
   readonly signal?: AbortSignal;
   readonly deadline: number;
   onDispatch: (count: number, depth: number) => void;
+  onOverflow: () => void;
   onCandidates: (
     form: RpnForm,
     tileStart: bigint,
@@ -141,6 +149,15 @@ export interface GPUSelfTestEvidence {
   }[];
 }
 
+export interface GPUOverflowRecoveryEvidence {
+  readonly uniqueEvaluations: bigint;
+  readonly dispatchedEvaluations: bigint;
+  readonly overflowRetries: number;
+  readonly results: readonly {
+    readonly combinationIndex: bigint;
+  }[];
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -169,6 +186,33 @@ export function assertGPUSelfTestEvidence(evidence: GPUSelfTestEvidence): number
     );
   }
   return piResult.value;
+}
+
+export function assertGPUOverflowRecoveryEvidence(
+  evidence: GPUOverflowRecoveryEvidence,
+): void {
+  const expectedCount = 13;
+  const recoveredIndices = new Set(
+    evidence.results.map((result) => result.combinationIndex.toString()),
+  );
+  const recoveredEveryIndex = Array.from(
+    { length: expectedCount },
+    (_, index) => recoveredIndices.has(String(index)),
+  ).every(Boolean);
+
+  if (
+    evidence.uniqueEvaluations !== BigInt(expectedCount) ||
+    evidence.dispatchedEvaluations <= evidence.uniqueEvaluations ||
+    evidence.overflowRetries < 1 ||
+    recoveredIndices.size !== expectedCount ||
+    !recoveredEveryIndex
+  ) {
+    throw new Error(
+      `Overflow recovery failed (evaluated=${evidence.uniqueEvaluations.toString()}, ` +
+      `dispatched=${evidence.dispatchedEvaluations.toString()}, ` +
+      `retries=${evidence.overflowRetries}, recovered=${recoveredIndices.size}/${expectedCount}).`,
+    );
+  }
 }
 
 /**
@@ -247,8 +291,8 @@ export class WebGPUConstantRecognizer {
     if (Number(device.limits.maxComputeWorkgroupStorageSize) < requiredWorkgroupBytes) {
       failAndDestroy(new Error(`The shader requires ${requiredWorkgroupBytes} bytes of workgroup storage.`));
     }
-    if (Number(device.limits.maxStorageBuffersPerShaderStage) < 4) {
-      failAndDestroy(new Error('The shader requires four storage-buffer bindings.'));
+    if (Number(device.limits.maxStorageBuffersPerShaderStage) < 5) {
+      failAndDestroy(new Error('The shader requires five storage-buffer bindings.'));
     }
 
     const shaderUrl = resolveShaderUrl(
@@ -311,6 +355,7 @@ export class WebGPUConstantRecognizer {
       supported: true,
       adapterName,
       selfTestPassed: false,
+      overflowRecoveryPassed: false,
       selfTestElapsedMs: 0,
       workgroupSize: WORKGROUP_SIZE,
       maxWorkgroupsPerDimension: Number(device.limits.maxComputeWorkgroupsPerDimension),
@@ -342,15 +387,18 @@ export class WebGPUConstantRecognizer {
   }
 
   /**
-   * Exercise the production search pipeline with one known expression (PI).
-   * Readiness is reported only when command submission, shader execution,
-   * buffer readback and CPU verification all agree.
+   * Exercise the production search pipeline with one known expression (PI),
+   * then deliberately overflow a one-slot candidate buffer. Readiness is
+   * reported only when dispatch/readback, CPU verification and lossless tile
+   * splitting all succeed on the selected adapter.
    */
   async runSelfTest(): Promise<GPUSelfTestSummary> {
     if (this.destroyed) throw new Error('The WebGPU recognizer has been destroyed.');
 
+    const selfTestStarted = nowMs();
     this.device.pushErrorScope('validation');
     let summary: GPUSearchSummary | null = null;
+    let overflowSummary: GPUSearchSummary | null = null;
     let operationError: unknown = null;
     try {
       summary = await this.search({
@@ -368,6 +416,25 @@ export class WebGPUConstantRecognizer {
         maxDurationMs: SELF_TEST_TIMEOUT_MS,
         stopAfterFirstAcceptedK: true,
       });
+
+      // All 13 K=1 constants pass this deliberately broad screening threshold.
+      // A one-slot logical candidate buffer must therefore overflow. The
+      // production splitter reruns smaller, non-overflowing tiles, and the
+      // assertion below proves that no combination index disappeared.
+      overflowSummary = await this.search({
+        target: Math.PI,
+        minK: 1,
+        maxK: 1,
+        screeningRelativeError: 1e30,
+        exactRelativeTolerance: 16 * Number.EPSILON,
+        topN: 13,
+        candidateCapacity: 1,
+        tileInvocations: 13,
+        groupBestToVerify: 0,
+        maxEvaluations: BigInt(13),
+        maxDurationMs: SELF_TEST_TIMEOUT_MS,
+        stopAfterFirstAcceptedK: false,
+      });
       await this.device.queue.onSubmittedWorkDone();
     } catch (error) {
       operationError = error;
@@ -383,19 +450,25 @@ export class WebGPUConstantRecognizer {
     if (operationError) throw operationError;
     if (validationError) throw new Error(validationError.message);
     if (!summary) throw new Error('The self-test returned no summary.');
+    if (!overflowSummary) throw new Error('The overflow self-test returned no summary.');
 
     const resultValue = assertGPUSelfTestEvidence(summary);
+    assertGPUOverflowRecoveryEvidence(overflowSummary);
+    const elapsedMs = nowMs() - selfTestStarted;
 
     this.infoState = {
       ...this.infoState,
       selfTestPassed: true,
-      selfTestElapsedMs: summary.elapsedMs,
+      overflowRecoveryPassed: true,
+      selfTestElapsedMs: elapsedMs,
     };
 
     return {
-      elapsedMs: summary.elapsedMs,
+      elapsedMs,
       uniqueEvaluations: summary.uniqueEvaluations,
       dispatchedEvaluations: summary.dispatchedEvaluations,
+      overflowRecoveryDispatchedEvaluations: overflowSummary.dispatchedEvaluations,
+      overflowRetries: overflowSummary.overflowRetries,
       resultValue,
     };
   }
@@ -411,9 +484,29 @@ export class WebGPUConstantRecognizer {
       throw new RangeError(`Expected 1 <= minK <= maxK <= ${MAX_GPU_K}.`);
     }
 
-    const calculator = compileCalculator(request.calculator);
+    const functionPoints = request.functionPoints ? [...request.functionPoints] : null;
+    if (functionPoints) {
+      if (functionPoints.length < 2) {
+        throw new RangeError('Function recognition requires at least two data points.');
+      }
+      for (const point of functionPoints) {
+        if (![point.x, point.y, point.dy].every(Number.isFinite) || point.dy < 0) {
+          throw new RangeError('Function data must be finite and dy must be non-negative.');
+        }
+        const pointF32 = [point.x, point.y, point.dy].map(Math.fround);
+        if (!pointF32.every(Number.isFinite)) {
+          throw new RangeError('Function data must be representable in FP32 for GPU screening.');
+        }
+      }
+    }
+
+    const calculator = compileCalculator(functionPoints ? {
+      ...(request.calculator ?? FULL_CALC4),
+      variables: ['x'],
+    } : request.calculator);
     const instructionCount =
-      calculator.constCodes.length + calculator.unaryCodes.length + calculator.binaryCodes.length;
+      calculator.constCodes.length + calculator.variableNames.length +
+      calculator.unaryCodes.length + calculator.binaryCodes.length;
 
     const candidateCapacity = validatePositiveInteger(
       request.candidateCapacity ?? DEFAULT_CANDIDATE_CAPACITY,
@@ -459,7 +552,7 @@ export class WebGPUConstantRecognizer {
       throw new RangeError('Target cannot be represented as a finite non-zero FP32 value.');
     }
 
-    const targetQuantization = relativeError(targetF32, request.target);
+    const targetQuantization = functionPoints ? 0 : relativeError(targetF32, request.target);
     const screeningRelativeError = Math.fround(Math.max(
       request.screeningRelativeError ?? DEFAULT_SCREENING_REL_ERROR,
       64 * F32_EPSILON,
@@ -473,10 +566,12 @@ export class WebGPUConstantRecognizer {
     const absoluteTolerance = request.absoluteTolerance ?? 0;
     const compressionRatioThreshold =
       request.compressionRatioThreshold ?? DEFAULT_CR_THRESHOLD;
+    const functionErrorTolerance = request.functionErrorTolerance ?? 1e-12;
     for (const [value, label] of [
       [exactTolerance, 'exactRelativeTolerance'],
       [absoluteTolerance, 'absoluteTolerance'],
       [compressionRatioThreshold, 'compressionRatioThreshold'],
+      [functionErrorTolerance, 'functionErrorTolerance'],
     ] as const) {
       if (!Number.isFinite(value) || value < 0) {
         throw new RangeError(`${label} must be finite and non-negative.`);
@@ -500,6 +595,7 @@ export class WebGPUConstantRecognizer {
     let completedThroughK = minK - 1;
     let stopReason: SearchStopReason = 'completed';
     let verifiedCandidates = 0;
+    let overflowRetries = 0;
 
     const keepResult = (result: VerifiedGPUResult): void => {
       results.push(result);
@@ -520,25 +616,36 @@ export class WebGPUConstantRecognizer {
         const rpn = tokens.join(', ');
 
         let value: number;
+        let absError: number;
+        let relError: number;
         try {
-          value = verifier(tokens);
+          if (functionPoints) {
+            const values = functionPoints.map(point => evaluateCoreRPN(tokens, point.x));
+            value = values[0];
+            relError = functionMeanSquaredError(values, functionPoints);
+            absError = relError;
+          } else {
+            value = verifier(tokens);
+            absError = absoluteError(value, request.target);
+            relError = relativeError(value, request.target);
+          }
         } catch {
           continue;
         }
-        if (!Number.isFinite(value)) continue;
+        if (!Number.isFinite(value) || !Number.isFinite(relError)) continue;
 
         verifiedCandidates++;
-        const absError = absoluteError(value, request.target);
-        const relError = relativeError(value, request.target);
         const cr = getCompressionRatio(relError, form.K, instructionCount);
-        const accepted = isAcceptedCandidate({
-          relativeError: relError,
-          absoluteError: absError,
-          compressionRatio: cr,
-          exactRelativeTolerance: exactTolerance,
-          absoluteTolerance,
-          compressionRatioThreshold,
-        });
+        const accepted = functionPoints
+          ? relError <= functionErrorTolerance
+          : isAcceptedCandidate({
+              relativeError: relError,
+              absoluteError: absError,
+              compressionRatio: cr,
+              exactRelativeTolerance: exactTolerance,
+              absoluteTolerance,
+              compressionRatioThreshold,
+            });
 
         keepResult({
           tokens,
@@ -562,6 +669,7 @@ export class WebGPUConstantRecognizer {
       targetF32,
       screeningRelativeError,
       calculator,
+      functionPoints,
       candidateCapacity,
       groupBestToVerify,
       signal: request.signal,
@@ -569,6 +677,9 @@ export class WebGPUConstantRecognizer {
       onDispatch: (count, depth) => {
         dispatchedEvaluations += BigInt(count);
         if (depth === 0) uniqueEvaluations += BigInt(count);
+      },
+      onOverflow: () => {
+        overflowRetries++;
       },
       onCandidates: verifyCandidates,
     };
@@ -625,6 +736,7 @@ export class WebGPUConstantRecognizer {
               dispatchedEvaluations,
               elapsedMs: nowMs() - started,
               verifiedCandidates,
+              overflowRetries,
             } satisfies GPUProgress);
           }
           formIndex++;
@@ -655,6 +767,7 @@ export class WebGPUConstantRecognizer {
       dispatchedEvaluations,
       elapsedMs: nowMs() - started,
       completedThroughK,
+      overflowRetries,
     };
   }
 
@@ -671,6 +784,7 @@ export class WebGPUConstantRecognizer {
     const dispatched = await this.dispatchTile(form, tileStart, batchCount, context, depth);
 
     if (dispatched.overflow) {
+      context.onOverflow();
       if (batchCount <= 1) {
         throw new Error('Candidate buffer overflowed for a one-expression tile.');
       }
@@ -717,7 +831,8 @@ export class WebGPUConstantRecognizer {
       throw new RangeError('Tile exceeds maxComputeWorkgroupsPerDimension.');
     }
 
-    const resources = this.ensureResources(context.candidateCapacity, workgroupCount);
+    const dataCapacity = Math.max(context.functionPoints?.length ?? 1, 1);
+    const resources = this.ensureResources(context.candidateCapacity, workgroupCount, dataCapacity);
     const formWords = this.packFormData(form, context.calculator, tileStart);
     const params = this.packParams(
       context.targetF32,
@@ -727,11 +842,17 @@ export class WebGPUConstantRecognizer {
       context.candidateCapacity,
       workgroupCount,
       context.calculator,
+      context.functionPoints,
     );
 
     this.device.queue.writeBuffer(resources.params, 0, params);
     this.device.queue.writeBuffer(resources.form, 0, formWords);
     this.device.queue.writeBuffer(resources.state, 0, new Uint32Array(4));
+    this.device.queue.writeBuffer(
+      resources.dataPoints,
+      0,
+      this.packFunctionData(context.functionPoints, context.targetF32),
+    );
 
     const encoder = this.device.createCommandEncoder({ label: 'Constant Recognition tile' });
     const pass = encoder.beginComputePass({ label: 'FP32 candidate screening' });
@@ -857,6 +978,7 @@ export class WebGPUConstantRecognizer {
     candidateCapacity: number,
     workgroupCount: number,
     calculator: CompiledCalculator,
+    functionPoints: readonly FunctionPoint[] | null,
   ): ArrayBuffer {
     const buffer = new ArrayBuffer(PARAM_BYTES);
     const floatView = new Float32Array(buffer, 0, 4);
@@ -868,12 +990,30 @@ export class WebGPUConstantRecognizer {
 
     const countView = new Uint32Array(buffer, 32, 4);
     countView.set([
-      calculator.constCodes.length,
+      calculator.constCodes.length + calculator.variableNames.length,
       calculator.unaryCodes.length,
       calculator.binaryCodes.length,
-      0,
+      calculator.constCodes.length,
     ]);
+
+    const searchView = new Uint32Array(buffer, 48, 4);
+    searchView.set([functionPoints ? 1 : 0, functionPoints?.length ?? 1, 0, 0]);
     return buffer;
+  }
+
+  private packFunctionData(
+    functionPoints: readonly FunctionPoint[] | null,
+    targetF32: number,
+  ): Float32Array<ArrayBuffer> {
+    const points = functionPoints ?? [{ x: 0, y: targetF32, dy: 0 }];
+    const packed = new Float32Array(points.length * 4);
+    for (let index = 0; index < points.length; index++) {
+      const offset = index * 4;
+      packed[offset] = Math.fround(points[index].x);
+      packed[offset + 1] = Math.fround(points[index].y);
+      packed[offset + 2] = Math.fround(points[index].dy);
+    }
+    return packed;
   }
 
   private packFormData(
@@ -893,12 +1033,17 @@ export class WebGPUConstantRecognizer {
     return words;
   }
 
-  private ensureResources(candidateCapacity: number, groupCapacity: number): GPUResources {
+  private ensureResources(
+    candidateCapacity: number,
+    groupCapacity: number,
+    dataCapacity: number,
+  ): GPUResources {
     const existing = this.resources;
     if (
       existing &&
       existing.candidateCapacity >= candidateCapacity &&
-      existing.groupCapacity >= groupCapacity
+      existing.groupCapacity >= groupCapacity &&
+      existing.dataCapacity >= dataCapacity
     ) {
       return existing;
     }
@@ -906,6 +1051,7 @@ export class WebGPUConstantRecognizer {
     this.destroyResources();
     const candidateBytes = candidateCapacity * RESULT_BYTES;
     const groupBytes = groupCapacity * RESULT_BYTES;
+    const dataBytes = dataCapacity * DATA_POINT_BYTES;
     const storageLimit = Math.min(
       this.info.maxStorageBufferBindingSize,
       this.info.maxBufferSize,
@@ -915,6 +1061,9 @@ export class WebGPUConstantRecognizer {
     }
     if (!Number.isSafeInteger(groupBytes) || groupBytes > storageLimit) {
       throw new RangeError('Workgroup-best buffer exceeds the adapter storage-buffer limit.');
+    }
+    if (!Number.isSafeInteger(dataBytes) || dataBytes > storageLimit) {
+      throw new RangeError('Function data buffer exceeds the adapter storage-buffer limit.');
     }
 
     const params = this.device.createBuffer({
@@ -942,6 +1091,11 @@ export class WebGPUConstantRecognizer {
       size: groupBytes,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
     });
+    const dataPoints = this.device.createBuffer({
+      label: 'CR function data points',
+      size: dataBytes,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
     const candidateReadback = this.device.createBuffer({
       label: 'CR candidate readback',
       size: candidateBytes,
@@ -967,17 +1121,20 @@ export class WebGPUConstantRecognizer {
         { binding: 2, resource: { buffer: candidates } },
         { binding: 3, resource: { buffer: state } },
         { binding: 4, resource: { buffer: groupBest } },
+        { binding: 5, resource: { buffer: dataPoints } },
       ],
     });
 
     this.resources = {
       candidateCapacity,
       groupCapacity,
+      dataCapacity,
       params,
       form,
       candidates,
       state,
       groupBest,
+      dataPoints,
       candidateReadback,
       stateReadback,
       groupReadback,
@@ -994,6 +1151,7 @@ export class WebGPUConstantRecognizer {
     resources.candidates.destroy();
     resources.state.destroy();
     resources.groupBest.destroy();
+    resources.dataPoints.destroy();
     resources.candidateReadback.destroy();
     resources.stateReadback.destroy();
     resources.groupReadback.destroy();

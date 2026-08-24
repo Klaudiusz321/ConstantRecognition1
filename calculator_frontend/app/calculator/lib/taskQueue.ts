@@ -53,6 +53,13 @@ export interface CalculatorSelection {
   ops: string[];
 }
 
+export interface TaskQueueOptions {
+  /** Variables are zero-arity terminals and enlarge every constant slot. */
+  variableCount?: number;
+  /** Function mode keeps the unary chain intact because x cannot be isolated by the C API. */
+  splitUnaryChain?: boolean;
+}
+
 // CALC4 instruction set — names must match CALC4.h exactly.
 export const CALC4_CONSTS = [
   'PI', 'EULER', 'NEG', 'GOLDENRATIO', 'ONE', 'TWO', 'THREE', 'FOUR',
@@ -119,12 +126,15 @@ export function chainIndex(K: number): number {
 
 export function buildTaskQueue(
   searchDepth: number,
-  calc: CalculatorSelection = FULL_CALCULATOR
+  calc: CalculatorSelection = FULL_CALCULATOR,
+  options: TaskQueueOptions = {},
 ): SearchTask[] {
   const nc = calc.consts.length;
+  const variableCount = options.variableCount ?? 0;
+  const terminalCount = nc + variableCount;
   const nu = calc.funcs.length;
   const nb = calc.ops.length;
-  if (nc === 0) return []; // no constants -> no valid formulas at all
+  if (terminalCount === 0) return []; // no terminals -> no valid formulas at all
 
   // Full CALC4 runs through the default entry point (search_RPN_with_cr),
   // which honors the user's CR slider; restricted calculators go through
@@ -155,9 +165,9 @@ export function buildTaskQueue(
     const level: SearchTask[] = [];
 
     for (let k = 0; k < N; k++) {
-      const w = structureWeight(k, K, nc, nu, nb);
+      const w = structureWeight(k, K, terminalCount, nu, nb);
       if (w === 0) continue; // invalid or unreachable with this button set
-      if (splitChain && k === chain) {
+      if ((options.splitUnaryChain ?? variableCount === 0) && splitChain && k === chain) {
         // Single-constant tasks that exactly tile the chain structure
         const perConst = Math.pow(nu, K - 1);
         for (const name of calc.consts) {

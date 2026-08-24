@@ -75,7 +75,7 @@ export function getAccelerationStatus({
   if (engine === 'cpu') {
     return {
       label: 'CPU mode',
-      description: 'GPU acceleration is turned off in Advanced settings.',
+      description: 'GPU acceleration is turned off in the Compute engine setting.',
       tone: 'neutral',
     };
   }
@@ -108,6 +108,7 @@ interface GPUCompletionInput {
   completedThroughK: number;
   evaluationCount: string;
   resultCount: number;
+  overflowRetries?: number;
 }
 
 export function describeGPUCompletion({
@@ -115,20 +116,24 @@ export function describeGPUCompletion({
   completedThroughK,
   evaluationCount,
   resultCount,
+  overflowRetries = 0,
 }: GPUCompletionInput): { phase: SearchPhase; detail: string } {
   const resultLabel = `${resultCount} verified result${resultCount === 1 ? '' : 's'}`;
+  const recoveryLabel = overflowRetries > 0
+    ? ` The candidate buffer filled ${overflowRetries} time${overflowRetries === 1 ? '' : 's'}; every affected tile was split and reprocessed.`
+    : '';
 
   if (stopReason === 'evaluation-limit') {
     return {
       phase: 'partial',
-      detail: `${resultLabel} found. The results remain valid, but the full search space was not explored after ${evaluationCount} candidates.`,
+      detail: `${resultLabel} found. The results remain valid, but the full search space was not explored after ${evaluationCount} candidates.${recoveryLabel}`,
     };
   }
 
   if (stopReason === 'time-limit') {
     return {
       phase: 'partial',
-      detail: `${resultLabel} found. The results remain valid, but the search stopped at the 30 second safety limit.`,
+      detail: `${resultLabel} found. The results remain valid, but the search stopped at the 30 second safety limit.${recoveryLabel}`,
     };
   }
 
@@ -142,13 +147,13 @@ export function describeGPUCompletion({
   if (stopReason === 'accepted-at-minimal-k') {
     return {
       phase: 'complete',
-      detail: `${resultLabel} found at the lowest accepted complexity, K=${completedThroughK}.`,
+      detail: `${resultLabel} found at the lowest accepted complexity, K=${completedThroughK}.${recoveryLabel}`,
     };
   }
 
   return {
     phase: 'complete',
-    detail: `${resultLabel} found after completing the search through K=${completedThroughK}.`,
+    detail: `${resultLabel} found after completing the search through K=${completedThroughK}.${recoveryLabel}`,
   };
 }
 

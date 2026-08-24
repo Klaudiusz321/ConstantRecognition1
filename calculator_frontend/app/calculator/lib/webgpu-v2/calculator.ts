@@ -13,15 +13,19 @@ export const CALC4_BINARY = [
   'PLUS', 'TIMES', 'SUBTRACT', 'DIVIDE', 'POWER',
 ] as const;
 
+export const CALC4_VARIABLES = ['x'] as const;
+
 export type ConstantToken = (typeof CALC4_CONSTANTS)[number];
 export type UnaryToken = (typeof CALC4_UNARY)[number];
 export type BinaryToken = (typeof CALC4_BINARY)[number];
-export type CalculatorToken = ConstantToken | UnaryToken | BinaryToken;
+export type VariableToken = (typeof CALC4_VARIABLES)[number];
+export type CalculatorToken = ConstantToken | UnaryToken | BinaryToken | VariableToken;
 
 export interface CalculatorSelection {
   consts: readonly string[];
   funcs: readonly string[];
   ops: readonly string[];
+  variables?: readonly string[];
 }
 
 export interface CompiledCalculator {
@@ -31,12 +35,14 @@ export interface CompiledCalculator {
   readonly constNames: readonly ConstantToken[];
   readonly unaryNames: readonly UnaryToken[];
   readonly binaryNames: readonly BinaryToken[];
+  readonly variableNames: readonly VariableToken[];
 }
 
 export const FULL_CALC4: CalculatorSelection = {
   consts: CALC4_CONSTANTS,
   funcs: CALC4_UNARY,
   ops: CALC4_BINARY,
+  variables: [],
 };
 
 function compileKind<T extends string>(
@@ -68,9 +74,10 @@ export function compileCalculator(
   const constants = compileKind(selection.consts, CALC4_CONSTANTS, 'constant');
   const unary = compileKind(selection.funcs, CALC4_UNARY, 'unary function');
   const binary = compileKind(selection.ops, CALC4_BINARY, 'binary operator');
+  const variables = compileKind(selection.variables ?? [], CALC4_VARIABLES, 'variable');
 
-  if (constants.codes.length === 0) {
-    throw new Error('At least one constant must be enabled.');
+  if (constants.codes.length + variables.codes.length === 0) {
+    throw new Error('At least one constant or variable must be enabled.');
   }
 
   return {
@@ -80,5 +87,6 @@ export function compileCalculator(
     constNames: constants.names,
     unaryNames: unary.names,
     binaryNames: binary.names,
+    variableNames: variables.names,
   };
 }

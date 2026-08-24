@@ -58,8 +58,15 @@ export function decodeCombination(
     const digit = digits[i];
     switch (form.kinds[i] as FormTokenKind) {
       case FormTokenKind.Constant: {
-        const canonicalCode = calculator.constCodes[digit];
-        tokens.push(CALC4_CONSTANTS[canonicalCode]);
+        if (digit < calculator.constCodes.length) {
+          const canonicalCode = calculator.constCodes[digit];
+          tokens.push(CALC4_CONSTANTS[canonicalCode]);
+        } else {
+          const variableIndex = digit - calculator.constCodes.length;
+          const variable = calculator.variableNames[variableIndex];
+          if (!variable) throw new RangeError('Variable digit outside calculator range.');
+          tokens.push(variable);
+        }
         break;
       }
       case FormTokenKind.Unary: {

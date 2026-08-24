@@ -1,4 +1,5 @@
 import type { CalculatorSelection, CalculatorToken, CompiledCalculator } from './calculator';
+import type { FunctionPoint } from '../types';
 
 export const MAX_GPU_K = 16;
 export const MAX_OPS_PER_KIND = 32;
@@ -24,6 +25,8 @@ export interface GPURecognizerInfo {
   readonly adapterName: string;
   /** True only after a real compute dispatch and readback succeeded. */
   readonly selfTestPassed: boolean;
+  /** True only after a deliberately overflowing result tile was recovered. */
+  readonly overflowRecoveryPassed: boolean;
   readonly selfTestElapsedMs: number;
   readonly workgroupSize: number;
   readonly maxWorkgroupsPerDimension: number;
@@ -36,6 +39,8 @@ export interface GPUSelfTestSummary {
   readonly elapsedMs: number;
   readonly uniqueEvaluations: bigint;
   readonly dispatchedEvaluations: bigint;
+  readonly overflowRecoveryDispatchedEvaluations: bigint;
+  readonly overflowRetries: number;
   readonly resultValue: number;
 }
 
@@ -75,6 +80,8 @@ export interface GPUProgress {
   readonly dispatchedEvaluations: bigint;
   readonly elapsedMs: number;
   readonly verifiedCandidates: number;
+  /** Number of full candidate-buffer tiles that were safely split and rerun. */
+  readonly overflowRetries: number;
 }
 
 export interface GPUSearchRequest {
@@ -82,6 +89,10 @@ export interface GPUSearchRequest {
   readonly minK?: number;
   readonly maxK?: number;
   readonly calculator?: CalculatorSelection;
+  /** When present, recognize one expression containing x against these points. */
+  readonly functionPoints?: readonly FunctionPoint[];
+  /** Accepted weighted MSE for function recognition. */
+  readonly functionErrorTolerance?: number;
 
   /** GPU screening threshold. Final ranking always uses CPU FP64 verification. */
   readonly screeningRelativeError?: number;
@@ -114,6 +125,8 @@ export interface GPUSearchSummary {
   readonly dispatchedEvaluations: bigint;
   readonly elapsedMs: number;
   readonly completedThroughK: number;
+  /** Number of full candidate-buffer tiles that were safely split and rerun. */
+  readonly overflowRetries: number;
 }
 
 export interface RawGPUCandidate {

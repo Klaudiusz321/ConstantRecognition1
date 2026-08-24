@@ -16,6 +16,7 @@ interface ResultsTableProps {
   sortDirection: 'asc' | 'desc';
   setSortDirection: (direction: 'asc' | 'desc') => void;
   instructionCount?: number; // enabled calculator buttons (36 = full CALC4)
+  errorLabel?: string;
 }
 
 function renderSortIcon(
@@ -38,6 +39,7 @@ export function ResultsTable({
   sortDirection,
   setSortDirection,
   instructionCount = 36,
+  errorLabel = 'Rel. Error',
 }: ResultsTableProps) {
   const [copyFeedback, setCopyFeedback] = useState<{ id: string; state: 'copied' | 'failed' } | null>(null);
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -201,7 +203,7 @@ export function ResultsTable({
           <div className="flex items-center gap-4 flex-wrap">
             {/* Max error filter */}
             <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-              <span>Max Error:</span>
+              <span>Max {errorLabel}:</span>
               <select
                 value={filters.maxRelErr ?? 1.0}
                 onChange={(e) => setFilters({ ...filters, maxRelErr: parseFloat(e.target.value) })}
@@ -271,7 +273,7 @@ export function ResultsTable({
                 className="p-3 w-28 cursor-pointer hover:text-[#0066cc] select-none"
                 onClick={() => handleSort('REL_ERR')}
               >
-                Rel. Error{renderSortIcon('REL_ERR', sortColumn, sortDirection)}
+                {errorLabel}{renderSortIcon('REL_ERR', sortColumn, sortDirection)}
               </th>
               <th 
                 className="p-3 w-20 cursor-pointer hover:text-[#0066cc] select-none"

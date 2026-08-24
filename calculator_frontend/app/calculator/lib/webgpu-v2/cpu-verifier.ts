@@ -87,10 +87,14 @@ function applyBinaryCoreOrder(token: string, top: number, below: number): number
   }
 }
 
-export function evaluateCoreRPN(tokens: readonly CalculatorToken[]): number {
+export function evaluateCoreRPN(tokens: readonly CalculatorToken[], xValue = 0): number {
   const stack: number[] = [];
 
   for (const token of tokens) {
+    if (token === 'x') {
+      stack.push(xValue);
+      continue;
+    }
     const constant = CONSTANTS[token];
     if (constant !== undefined) {
       stack.push(constant);
