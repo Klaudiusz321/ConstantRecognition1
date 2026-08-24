@@ -90,8 +90,25 @@ const ALL_SHORT_CHARS = new Set([
 function isShortFormRPN(rpn: string): boolean {
   // Short-form RPN has no delimiters and all chars are from the GPU charset
   if (rpn.includes(',') || rpn.includes(' ')) return false;
-  // Must have at least one char and all chars must be valid short-form
-  return rpn.length > 0 && [...rpn].every(c => ALL_SHORT_CHARS.has(c));
+  if (rpn.length === 0 || ![...rpn].every(c => ALL_SHORT_CHARS.has(c))) return false;
+
+  // A character match alone is ambiguous: the function variable `x` shares
+  // its spelling with the legacy compact opcode for SUBTRACT. Only classify
+  // a string as compact GPU RPN when it is also a complete, stack-valid RPN
+  // program. A lone `x` is therefore a variable, while `00x` remains a valid
+  // compact subtraction expression.
+  let stackDepth = 0;
+  for (const char of rpn) {
+    if (SHORT_CONST_MAP[char]) {
+      stackDepth += 1;
+    } else if (SHORT_UNARY_MAP[char]) {
+      if (stackDepth < 1) return false;
+    } else if (SHORT_BINARY_MAP[char]) {
+      if (stackDepth < 2) return false;
+      stackDepth -= 1;
+    }
+  }
+  return stackDepth === 1;
 }
 
 // Convert short-form RPN to long-form tokens
@@ -259,12 +276,16 @@ export function rpnToMathematica(rpn: string | string[]): string {
     } else if (mmaOperators[token]) {
       const right = stack.pop() || '?';  // top
       const left = stack.pop() || '?';   // second
-      if (isShort) {
-        // Standard RPN: "a b op" means op(a, b)
-        stack.push(`(${left} ${mmaOperators[token]} ${right})`);
+      // Compact GPU RPN uses standard operand order. The WASM core uses the
+      // historical reversed order for non-commutative operators.
+      const lhs = isShort ? left : right;
+      const rhs = isShort ? right : left;
+      if (token === 'POWER') {
+        // Parenthesize both operands so Mathematica/Wolfram cannot interpret
+        // x ^ 1/(Cos[x]) as (x ^ 1) / Cos[x].
+        stack.push(`(${lhs})^(${rhs})`);
       } else {
-        // WASM non-standard RPN: "a b op" means op(b, a)
-        stack.push(`(${right} ${mmaOperators[token]} ${left})`);
+        stack.push(`(${lhs} ${mmaOperators[token]} ${rhs})`);
       }
     } else if (token) {
       // Unknown token - push as-is

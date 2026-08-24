@@ -781,7 +781,7 @@ export default function CalculatorPage() {
           RPN: r.RPN,
           result: numericValue,
           REL_ERR: r.REL_ERR,
-          status: r.result === 'INTERMEDIATE' ? 'SEARCHING' : (r.result || r.status || 'K_BEST'),
+          status: r.result === 'INTERMEDIATE' ? 'K_BEST' : (r.result || r.status || 'K_BEST'),
           compressionRatio: r.COMPRESSION_RATIO
         });
       });
