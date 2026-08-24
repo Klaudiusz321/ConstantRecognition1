@@ -4,7 +4,7 @@ import { FormTokenKind, MAX_GPU_K, type RpnForm } from './types';
 function radixFor(kind: FormTokenKind, calculator: CompiledCalculator): number {
   switch (kind) {
     case FormTokenKind.Constant:
-      return calculator.constCodes.length;
+      return calculator.constCodes.length + calculator.variableNames.length;
     case FormTokenKind.Unary:
       return calculator.unaryCodes.length;
     case FormTokenKind.Binary:

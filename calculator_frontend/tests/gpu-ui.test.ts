@@ -104,6 +104,18 @@ describe('GPU interface state', () => {
     expect(timeLimit.detail).toContain('30 second safety limit');
   });
 
+  it('reports when full GPU candidate tiles were safely reprocessed', () => {
+    const completion = describeGPUCompletion({
+      stopReason: 'completed',
+      completedThroughK: 4,
+      evaluationCount: '1,000',
+      resultCount: 2,
+      overflowRetries: 3,
+    });
+    expect(completion.detail).toContain('buffer filled 3 times');
+    expect(completion.detail).toContain('every affected tile was split and reprocessed');
+  });
+
   it('distinguishes complete and aborted GPU outcomes', () => {
     expect(describeGPUCompletion({
       stopReason: 'completed',

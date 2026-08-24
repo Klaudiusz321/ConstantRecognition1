@@ -3,6 +3,15 @@
 // Error mode for uncertainty handling
 export type ErrorMode = 'zero' | 'automatic' | 'manual' | 'large_errors';
 
+export type SearchMode = 'constant' | 'function';
+
+export interface FunctionPoint {
+  x: number;
+  y: number;
+  /** Optional measurement uncertainty. Zero means unweighted. */
+  dy: number;
+}
+
 // Compute backend selected in the calculator UI.
 export type ComputeEngine = 'auto' | 'gpu' | 'cpu';
 

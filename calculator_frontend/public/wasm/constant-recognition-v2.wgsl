@@ -13,8 +13,10 @@ struct Params {
     target_threshold: vec4<f32>,
     // x = K, y = batch count, z = candidate capacity, w = workgroup count
     sizes: vec4<u32>,
-    // x = constant count, y = unary count, z = binary count
+    // x = terminal count, y = unary count, z = binary count, w = constant count
     counts: vec4<u32>,
+    // x = mode (0 constant, 1 function), y = data-point count
+    search: vec4<u32>,
 }
 
 struct FormData {
@@ -44,11 +46,21 @@ struct SearchState {
     _pad1: u32,
 }
 
+struct DataPoint {
+    // x = independent variable, y = target, z = optional dy
+    values: vec4<f32>,
+}
+
+struct DataPointBuffer {
+    values: array<DataPoint>,
+}
+
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> form_data: FormData;
 @group(0) @binding(2) var<storage, read_write> candidates: CandidateBuffer;
 @group(0) @binding(3) var<storage, read_write> state: SearchState;
 @group(0) @binding(4) var<storage, read_write> group_best: CandidateBuffer;
+@group(0) @binding(5) var<storage, read> data_points: DataPointBuffer;
 
 var<workgroup> wg_error: array<f32, 256>;
 var<workgroup> wg_value: array<f32, 256>;
@@ -172,7 +184,7 @@ fn decode_slots(local_index: u32, K: u32, slots: ptr<function, array<u32, 16>>) 
     }
 }
 
-fn evaluate_expression(slots: ptr<function, array<u32, 16>>, K: u32) -> EvalResult {
+fn evaluate_expression(slots: ptr<function, array<u32, 16>>, K: u32, x_value: f32) -> EvalResult {
     var stack: array<f32, 16>;
     var sp = 0u;
 
@@ -184,7 +196,11 @@ fn evaluate_expression(slots: ptr<function, array<u32, 16>>, K: u32) -> EvalResu
             if (sp >= MAX_K || slot >= params.counts.x) {
                 return EvalResult(0.0, 0u);
             }
-            let value = constant_value(form_data.constant_ops[slot]);
+            let value = select(
+                x_value,
+                constant_value(form_data.constant_ops[slot]),
+                slot < params.counts.w,
+            );
             stack[sp] = value;
             sp = sp + 1u;
         } else if (kind == 1u) {
@@ -214,6 +230,15 @@ fn evaluate_expression(slots: ptr<function, array<u32, 16>>, K: u32) -> EvalResu
     return EvalResult(stack[0], 1u);
 }
 
+fn contains_variable(slots: ptr<function, array<u32, 16>>, K: u32) -> bool {
+    for (var i = 0u; i < K; i = i + 1u) {
+        if (form_data.ternary[i] == 0u && (*slots)[i] >= params.counts.w) {
+            return true;
+        }
+    }
+    return false;
+}
+
 fn relative_error(value: f32, target_value: f32) -> f32 {
     if (target_value == 0.0) {
         return abs(value);
@@ -235,20 +260,44 @@ fn search(
     if (local_index < params.sizes.y) {
         var slots: array<u32, 16>;
         decode_slots(local_index, params.sizes.x, &slots);
-        let evaluated = evaluate_expression(&slots, params.sizes.x);
 
-        if (evaluated.valid == 1u) {
-            value = evaluated.value;
-            error = relative_error(value, params.target_threshold.x);
-            valid = select(0u, 1u, finite_f32(error));
-
-            if (valid == 1u && error <= params.target_threshold.y) {
-                let output_index = atomicAdd(&state.count, 1u);
-                if (output_index < params.sizes.z) {
-                    candidates.values[output_index] = Candidate(local_index, error, value, 1u);
-                } else {
-                    atomicStore(&state.overflow, 1u);
+        if (params.search.x == 1u) {
+            if (contains_variable(&slots, params.sizes.x)) {
+                var total_error = 0.0;
+                var first_value = 0.0;
+                for (var point_index = 0u; point_index < params.search.y; point_index = point_index + 1u) {
+                    let point = data_points.values[point_index].values;
+                    let evaluated = evaluate_expression(&slots, params.sizes.x, point.x);
+                    if (point_index == 0u) {
+                        first_value = evaluated.value;
+                    }
+                    if (evaluated.valid == 0u) {
+                        total_error = total_error + 1e10;
+                    } else {
+                        let scale = select(1.0, point.z, point.z > 0.0);
+                        let residual = (evaluated.value - point.y) / scale;
+                        total_error = total_error + residual * residual;
+                    }
                 }
+                value = first_value;
+                error = total_error / f32(max(params.search.y, 1u));
+                valid = select(0u, 1u, finite_f32(error));
+            }
+        } else {
+            let evaluated = evaluate_expression(&slots, params.sizes.x, 0.0);
+            if (evaluated.valid == 1u) {
+                value = evaluated.value;
+                error = relative_error(value, params.target_threshold.x);
+                valid = select(0u, 1u, finite_f32(error));
+            }
+        }
+
+        if (valid == 1u && error <= params.target_threshold.y) {
+            let output_index = atomicAdd(&state.count, 1u);
+            if (output_index < params.sizes.z) {
+                candidates.values[output_index] = Candidate(local_index, error, value, 1u);
+            } else {
+                atomicStore(&state.overflow, 1u);
             }
         }
     }

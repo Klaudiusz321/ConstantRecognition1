@@ -180,6 +180,11 @@ export function Sidebar({
                 {!gpuChecked ? 'Testing GPU acceleration...' : gpuSupported ? 'GPU Ready' : 'GPU unavailable'}
               </span>
             </div>
+            {gpuChecked && gpuSupported && (
+              <p className="text-[11px] leading-4 text-green-700 dark:text-green-300">
+                Compute, readback and full-buffer recovery tests passed.
+              </p>
+            )}
             {gpuChecked && !gpuSupported && friendlyGPUError && (
               <p role="status" className="break-words text-[11px] leading-4 text-amber-700 dark:text-amber-300">
                 {friendlyGPUError}
@@ -189,6 +194,52 @@ export function Sidebar({
               {detectedCPUs} logical CPUs detected
             </div>
           </div>
+
+          {/* Keep the backend choice visible so GPU and CPU runs are easy to compare. */}
+          <fieldset className="space-y-2" disabled={isCalculating}>
+            <legend className="text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+              Compute Engine
+            </legend>
+            <div
+              className="grid grid-cols-3 rounded-lg bg-gray-100 p-1 dark:bg-[#111113]"
+              aria-describedby="compute-engine-help"
+            >
+              {([
+                { value: 'auto' as const, label: 'Auto', disabled: false },
+                { value: 'gpu' as const, label: 'GPU', disabled: !gpuSupported },
+                { value: 'cpu' as const, label: 'CPU', disabled: false },
+              ]).map((option) => (
+                <label
+                  key={option.value}
+                  className={`relative rounded-md px-2 py-2 text-center text-xs font-semibold transition-colors ${
+                    option.disabled
+                      ? 'cursor-not-allowed text-gray-400 opacity-60'
+                      : computeEngine === option.value
+                        ? 'cursor-pointer bg-white text-[#0066cc] shadow-sm dark:bg-[#2a2a2e] dark:text-blue-300'
+                        : 'cursor-pointer text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="computeEngine"
+                    value={option.value}
+                    checked={computeEngine === option.value}
+                    onChange={() => setComputeEngine(option.value as ComputeEngine)}
+                    disabled={option.disabled || isCalculating}
+                    className="sr-only"
+                  />
+                  {option.label}
+                </label>
+              ))}
+            </div>
+            <p id="compute-engine-help" className="text-[11px] leading-4 text-gray-500 dark:text-gray-400">
+              {computeEngine === 'gpu'
+                ? 'GPU screening is forced; every returned candidate is verified on the CPU.'
+                : computeEngine === 'cpu'
+                  ? 'GPU is disabled, making this mode suitable for a CPU comparison run.'
+                  : 'Uses the tested GPU when available and falls back safely to CPU/WASM.'}
+            </p>
+          </fieldset>
 
           {/* Calculator button palette */}
           <div className="space-y-2">
@@ -318,66 +369,19 @@ export function Sidebar({
           {showAdvanced && (
             <div className="space-y-6 pb-2">
 
-              {/* Compute backend */}
-              <fieldset className="space-y-3" disabled={isCalculating}>
-                <legend className="text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
-                  Compute Engine
-                </legend>
-                <p id="compute-engine-help" className="text-[11px] leading-5 text-gray-500 dark:text-gray-400">
-                  Auto is recommended. It uses GPU acceleration when available and falls back safely to CPU/WASM.
-                </p>
-                <div className="space-y-2" aria-describedby="compute-engine-help">
-                  {([
-                    {
-                      value: 'auto' as const,
-                      title: 'Auto (recommended)',
-                      description: 'Fastest available engine with automatic fallback.',
-                      disabled: false,
-                    },
-                    {
-                      value: 'gpu' as const,
-                      title: 'GPU acceleration',
-                      description: 'GPU screening with CPU verification for every result.',
-                      disabled: !gpuSupported,
-                    },
-                    {
-                      value: 'cpu' as const,
-                      title: 'CPU / WASM',
-                      description: 'Compatible mode without graphics acceleration.',
-                      disabled: false,
-                    },
-                  ]).map((option) => (
-                    <label
-                      key={option.value}
-                      className={`flex min-h-14 items-start gap-3 rounded-lg border p-3 transition-colors ${
-                        option.disabled
-                          ? 'cursor-not-allowed border-gray-200 opacity-50 dark:border-[#2a2a2e]'
-                          : computeEngine === option.value
-                            ? 'cursor-pointer border-[#0066cc] bg-blue-50 dark:bg-blue-950/30'
-                            : 'cursor-pointer border-gray-200 hover:border-gray-300 dark:border-[#2a2a2e] dark:hover:border-[#3a3a3e]'
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="computeEngine"
-                        value={option.value}
-                        checked={computeEngine === option.value}
-                        onChange={() => setComputeEngine(option.value as ComputeEngine)}
-                        disabled={option.disabled || isCalculating}
-                        className="mt-0.5 h-4 w-4 shrink-0 accent-[#0066cc]"
-                      />
-                      <span className="min-w-0">
-                        <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">{option.title}</span>
-                        <span className="mt-0.5 block text-[11px] leading-4 text-gray-500 dark:text-gray-400">{option.description}</span>
-                      </span>
-                    </label>
-                  ))}
+              {/* GPU diagnostics */}
+              <div className="space-y-3">
+                <div className="text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+                  GPU Diagnostics
                 </div>
                 <div className="rounded-lg bg-gray-50 p-3 text-[11px] leading-5 text-gray-500 dark:bg-[#111113] dark:text-gray-400">
                   {gpuSupported && friendlyAdapterName ? (
-                    <span>Graphics processor: <strong className="font-medium text-gray-700 dark:text-gray-300">{friendlyAdapterName}</strong></span>
+                    <span>
+                      Graphics processor: <strong className="font-medium text-gray-700 dark:text-gray-300">{friendlyAdapterName}</strong>.
+                      {' '}Compute, readback and forced buffer-overflow recovery passed.
+                    </span>
                   ) : gpuSupported ? (
-                    <span>A compatible graphics processor passed the compute self-test.</span>
+                    <span>A compatible graphics processor passed compute, readback and forced buffer-overflow recovery tests.</span>
                   ) : (
                     <span className="break-words">
                       GPU acceleration is unavailable. {friendlyGPUError ?? 'Auto mode will use CPU/WASM.'}
@@ -392,7 +396,7 @@ export function Sidebar({
                 >
                   {!gpuChecked ? 'Testing GPU...' : gpuSupported ? 'Run GPU test again' : 'Retry GPU test'}
                 </button>
-              </fieldset>
+              </div>
 
               {/* Uncertainty Mode */}
               <div className="space-y-2">

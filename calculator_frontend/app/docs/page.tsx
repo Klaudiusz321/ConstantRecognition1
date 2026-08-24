@@ -4,7 +4,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Method Notes",
   description:
-    "Scientific documentation for Constant Recognition: inverse RPN search, code length K, numerical uncertainty, examples, limitations, and citation.",
+    "Scientific documentation for inverse RPN recognition of constants and univariate functions, including uncertainty, MSE, code length K, and verification.",
   alternates: {
     canonical: "/docs",
   },
@@ -36,6 +36,9 @@ const notation = [
   ["K", "length of the RPN code being searched"],
   ["RPN", "reverse Polish notation button sequence"],
   ["CR", "compression-style ranking signal balancing error and length"],
+  ["x, y", "input and observed output for univariate function recognition"],
+  ["dy", "optional non-negative uncertainty used to scale a function residual"],
+  ["MSE", "mean squared residual; with dy, mean of ((f(x)-y)/dy)^2"],
 ];
 
 const scientificExamples = [
@@ -82,8 +85,9 @@ export default function DocsPage() {
           </h1>
           <p className="mt-6 max-w-3xl text-lg leading-8 text-slate-600">
             The calculator reverses the usual numerical workflow. Instead of
-            entering a formula and obtaining a number, one enters a number and
-            searches for short calculator programs that reproduce it.
+            entering a formula and obtaining a number, one enters a numerical
+            target—or a table of x,y observations—and searches for short
+            calculator programs that reproduce it.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
@@ -159,6 +163,33 @@ export default function DocsPage() {
               workers and WebGPU help, but the combinatorial growth remains the
               central limitation.
             </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="functions" className="px-4 py-16 sm:px-6 lg:px-8">
+        <div className="mx-auto grid max-w-5xl gap-10 lg:grid-cols-[1fr_1fr]">
+          <div>
+            <h2 className="text-3xl font-semibold tracking-normal">
+              Univariate function recognition
+            </h2>
+            <p className="mt-4 leading-7 text-slate-600">
+              In <span className="font-mono">Identify f(x)</span> mode, enter
+              one row per observation as <span className="font-mono">x, y</span>
+              or <span className="font-mono">x, y, dy</span>. Every candidate
+              must contain x and is evaluated against every row. CPU/WASM uses
+              double precision; GPU candidates are screened in FP32 and then
+              recomputed on the CPU before they are reported.
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-5">
+            <h3 className="font-semibold text-slate-950">Acceptance contract</h3>
+            <ul className="mt-3 space-y-2 leading-7 text-slate-600">
+              <li>At least two finite data points are required.</li>
+              <li>dy is optional, but cannot be negative.</li>
+              <li>Residuals are divided by dy when dy is greater than zero.</li>
+              <li>A strict fit is accepted when weighted MSE is at most 10^-12.</li>
+            </ul>
           </div>
         </div>
       </section>
@@ -255,6 +286,7 @@ export default function DocsPage() {
               <li>Assumed Delta z or statement that the search was exact.</li>
               <li>Maximum K and selected calculator/domain.</li>
               <li>Candidate expression and independent verification method.</li>
+              <li>For f(x): all x,y[,dy] rows and the weighted MSE.</li>
             </ul>
           </div>
         </div>

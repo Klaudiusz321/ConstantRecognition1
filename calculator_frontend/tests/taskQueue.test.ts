@@ -170,6 +170,20 @@ describe('buildTaskQueue with a restricted calculator (button palette)', () => {
   });
 });
 
+describe('buildTaskQueue for function recognition', () => {
+  it('counts x as a terminal and keeps the unary chain unsplit', () => {
+    const calculator: CalculatorSelection = {
+      consts: ['PI', 'TWO'],
+      funcs: ['SQR'],
+      ops: ['PLUS'],
+    };
+    const tasks = buildTaskQueue(7, calculator, { variableCount: 1, splitUnaryChain: false });
+    const chainTasks = tasks.filter(task => task.minK === 7 && task.taskId === chainIndex(7));
+    expect(chainTasks).toHaveLength(1);
+    expect(chainTasks[0].weight).toBe(3); // PI, TWO or x followed by six SQR operations
+  });
+});
+
 describe('structureWeight / chainIndex', () => {
   it('weights the pure-unary chain as 13 * 18^(K-1)', () => {
     for (const K of [2, 5, 7]) {

@@ -25,8 +25,15 @@ import {
   digitsToIndex,
   indexToDigits,
 } from '../app/calculator/lib/webgpu-v2/mixed-radix';
-import { assertGPUSelfTestEvidence } from '../app/calculator/lib/webgpu-v2/webgpu-engine';
+import {
+  assertGPUOverflowRecoveryEvidence,
+  assertGPUSelfTestEvidence,
+} from '../app/calculator/lib/webgpu-v2/webgpu-engine';
 import { FormTokenKind } from '../app/calculator/lib/webgpu-v2/types';
+import {
+  functionMeanSquaredError,
+  parseFunctionDataset,
+} from '../app/calculator/lib/search-contract';
 
 const EXPECTED_FORM_COUNTS = [1, 1, 2, 4, 9, 21, 51, 127, 323];
 const EXPECTED_LEVEL_COMBINATIONS = [
@@ -132,6 +139,30 @@ describe('CPU verifier matches the professor C core', () => {
     expect(gamma(5)).toBeCloseTo(24, 12);
     expect(evaluateCoreRPN(['FIVE', 'GAMMA'])).toBeCloseTo(24, 12);
   });
+
+  it('evaluates the variable x with the same RPN operand order', () => {
+    expect(evaluateCoreRPN(['x'], 3)).toBe(3);
+    expect(evaluateCoreRPN(['TWO', 'x', 'POWER'], 3)).toBe(9);
+    expect(evaluateCoreRPN(['TWO', 'x', 'SUBTRACT'], 3)).toBe(1);
+  });
+});
+
+describe('scientific function-search contract', () => {
+  it('parses x, y and optional dy rows', () => {
+    expect(parseFunctionDataset('0, 0\n1 1 0.1\n2;4').points).toEqual([
+      { x: 0, y: 0, dy: 0 },
+      { x: 1, y: 1, dy: 0.1 },
+      { x: 2, y: 4, dy: 0 },
+    ]);
+  });
+
+  it('rejects invalid uncertainty and computes dy-weighted MSE', () => {
+    expect(parseFunctionDataset('0,0\n1,1,-0.1').error).toMatch(/non-negative/i);
+    expect(functionMeanSquaredError(
+      [0, 1.1],
+      [{ x: 0, y: 0, dy: 0 }, { x: 1, y: 1, dy: 0.1 }],
+    )).toBeCloseTo(0.5, 12);
+  });
 });
 
 describe('identification criteria', () => {
@@ -183,6 +214,19 @@ describe('calculator selection', () => {
       CALC4_BINARY.indexOf('SUBTRACT'),
     ]);
   });
+
+  it('adds x as a terminal without changing constant opcodes', () => {
+    const calculator = compileCalculator({
+      consts: ['PI'],
+      funcs: [],
+      ops: ['TIMES'],
+      variables: ['x'],
+    });
+
+    expect(calculator.variableNames).toEqual(['x']);
+    expect(calculator.constCodes.length + calculator.variableNames.length).toBe(2);
+    expect([...calculator.constCodes]).toEqual([CALC4_CONSTANTS.indexOf('PI')]);
+  });
 });
 
 describe('WGSL regression guards', () => {
@@ -205,6 +249,12 @@ describe('WGSL regression guards', () => {
 
   it('reports candidate-buffer overflow instead of silently truncating', () => {
     expect(shader).toContain('atomicStore(&state.overflow, 1u)');
+  });
+
+  it('screens function candidates across all data points and requires x', () => {
+    expect(shader).toContain('contains_variable');
+    expect(shader).toContain('params.search.y');
+    expect(shader).toContain('total_error / f32(max(params.search.y, 1u))');
   });
 });
 
@@ -251,5 +301,28 @@ describe('WebGPU readiness self-test', () => {
         gpuRelativeError: 1,
       }],
     })).toThrow(/gpu=0/i);
+  });
+
+  it('requires every candidate to survive a forced buffer overflow and rerun', () => {
+    const completeEvidence = {
+      uniqueEvaluations: BigInt(13),
+      dispatchedEvaluations: BigInt(63),
+      overflowRetries: 12,
+      results: Array.from({ length: 13 }, (_, index) => ({
+        combinationIndex: BigInt(index),
+      })),
+    };
+    expect(() => assertGPUOverflowRecoveryEvidence(completeEvidence)).not.toThrow();
+
+    expect(() => assertGPUOverflowRecoveryEvidence({
+      ...completeEvidence,
+      results: completeEvidence.results.slice(0, 12),
+    })).toThrow(/recovered=12\/13/i);
+
+    expect(() => assertGPUOverflowRecoveryEvidence({
+      ...completeEvidence,
+      dispatchedEvaluations: BigInt(13),
+      overflowRetries: 0,
+    })).toThrow(/overflow recovery failed/i);
   });
 });

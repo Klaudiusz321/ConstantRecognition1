@@ -10,6 +10,10 @@ interface ResultCardProps {
   allResults?: SearchResult[];  // For calculating accuracy jump
   crThreshold: number;
   instructionCount?: number;    // enabled calculator buttons (36 = full CALC4)
+  errorLabel?: string;
+  valueLabel?: string;
+  functionMode?: boolean;
+  functionErrorTolerance?: number;
 }
 
 // Check if there's a significant accuracy jump (order of magnitude improvement)
@@ -41,7 +45,16 @@ function hasAccuracyJump(result: SearchResult, allResults: SearchResult[]): bool
   return prevErr / currErr >= 100;
 }
 
-export function ResultCard({ result, allResults = [], crThreshold, instructionCount = 36 }: ResultCardProps) {
+export function ResultCard({
+  result,
+  allResults = [],
+  crThreshold,
+  instructionCount = 36,
+  errorLabel = 'Relative Error',
+  valueLabel = 'Numeric Value',
+  functionMode = false,
+  functionErrorTolerance = 1e-12,
+}: ResultCardProps) {
   const cr = getCompressionRatio(result, instructionCount);
   const probability = Math.pow(instructionCount, -result.K);  // 1/n^K
   const hasJump = hasAccuracyJump(result, allResults);
@@ -50,9 +63,12 @@ export function ResultCard({ result, allResults = [], crThreshold, instructionCo
   const crPassed = cr >= crThreshold;
   const probPassed = probability < 1e-6;  // Very unlikely by chance
   const jumpPassed = hasJump;
+  const fitPassed = result.REL_ERR <= functionErrorTolerance;
   
-  const allPassed = crPassed && probPassed && jumpPassed;
-  const passedCount = [crPassed, probPassed, jumpPassed].filter(Boolean).length;
+  const allPassed = functionMode ? fitPassed : crPassed && probPassed && jumpPassed;
+  const passedCount = functionMode
+    ? (fitPassed ? 3 : 0)
+    : [crPassed, probPassed, jumpPassed].filter(Boolean).length;
 
   return (
     <div className="p-4 sm:p-6 bg-linear-to-r from-[#0066cc]/5 to-transparent dark:from-[#0066cc]/10 border-b border-gray-200 dark:border-[#2a2a2e] overflow-hidden">
@@ -66,7 +82,7 @@ export function ResultCard({ result, allResults = [], crThreshold, instructionCo
             </div>
           </div>
           <div>
-            <label className="text-[10px] sm:text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">Numeric Value</label>
+            <label className="text-[10px] sm:text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">{valueLabel}</label>
             <div className="text-base sm:text-lg font-mono text-gray-700 dark:text-gray-300 mt-1 break-all">{result.result}</div>
           </div>
           <div>
@@ -81,7 +97,7 @@ export function ResultCard({ result, allResults = [], crThreshold, instructionCo
             </a>
           </div>
           <div>
-            <label className="text-[10px] sm:text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">Relative Error</label>
+            <label className="text-[10px] sm:text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">{errorLabel}</label>
             <div className="text-sm font-mono text-gray-500 dark:text-gray-500 mt-1">{result.REL_ERR.toExponential(2)}</div>
           </div>
         </div>
@@ -102,23 +118,29 @@ export function ResultCard({ result, allResults = [], crThreshold, instructionCo
           </div>
           
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
-            {/* Accuracy Jump */}
+            {/* Accuracy jump for constants; direct fit criterion for functions */}
             <div className="flex items-center gap-2 group">
               <div className={`w-2 h-2 rounded-full transition-all ${
-                jumpPassed 
+                (functionMode ? fitPassed : jumpPassed)
                   ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]' 
                   : 'bg-gray-300 dark:bg-gray-600'
               }`} />
               <div className="flex flex-col">
                 <span className={`text-[10px] uppercase tracking-wide font-medium ${
-                  jumpPassed ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400 dark:text-gray-500'
+                  (functionMode ? fitPassed : jumpPassed)
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-gray-400 dark:text-gray-500'
                 }`}>
-                  Accuracy Jump
+                  {functionMode ? 'Fit Criterion' : 'Accuracy Jump'}
                 </span>
                 <span className={`text-xs font-mono ${
-                  jumpPassed ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-500 dark:text-gray-400'
+                  (functionMode ? fitPassed : jumpPassed)
+                    ? 'text-emerald-700 dark:text-emerald-300'
+                    : 'text-gray-500 dark:text-gray-400'
                 }`}>
-                  {jumpPassed ? '>100x' : '—'}
+                  {functionMode
+                    ? `MSE ≤ ${functionErrorTolerance.toExponential(0)}`
+                    : jumpPassed ? '>100x' : '—'}
                 </span>
               </div>
             </div>
@@ -148,23 +170,23 @@ export function ResultCard({ result, allResults = [], crThreshold, instructionCo
 
             <div className="w-px h-8 bg-gray-200 dark:bg-gray-700 hidden sm:block" />
 
-            {/* Probability */}
+            {/* Chance probability for constants; variable guard for functions */}
             <div className="flex items-center gap-2 group">
               <div className={`w-2 h-2 rounded-full transition-all ${
-                probPassed 
+                (functionMode || probPassed)
                   ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]' 
                   : 'bg-gray-300 dark:bg-gray-600'
               }`} />
               <div className="flex flex-col">
                 <span className={`text-[10px] uppercase tracking-wide font-medium ${
-                  probPassed ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400 dark:text-gray-500'
+                  (functionMode || probPassed) ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400 dark:text-gray-500'
                 }`}>
-                  Probability
+                  {functionMode ? 'Variable Guard' : 'Probability'}
                 </span>
                 <span className={`text-xs font-mono ${
-                  probPassed ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-500 dark:text-gray-400'
+                  (functionMode || probPassed) ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-500 dark:text-gray-400'
                 }`}>
-                  P={probability.toExponential(0)}
+                  {functionMode ? 'contains x' : `P=${probability.toExponential(0)}`}
                 </span>
               </div>
             </div>

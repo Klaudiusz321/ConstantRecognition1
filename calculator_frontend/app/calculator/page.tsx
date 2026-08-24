@@ -11,6 +11,7 @@ import {
   ComputeEngine,
   SearchBackend,
   SearchPhase,
+  SearchMode,
   SearchProgress as SearchProgressData,
 } from './lib/types';
 import { extractPrecision, evaluateRPN } from './lib/rpn';
@@ -19,6 +20,7 @@ import {
   CALC4_CONSTS, CALC4_FUNCS, CALC4_OPS
 } from './lib/taskQueue';
 import { getCompressionRatio as computeCR } from './lib/cr';
+import { DEFAULT_FUNCTION_DATASET, parseFunctionDataset } from './lib/search-contract';
 import { WebGPUConstantRecognizer, type GPUProgress } from './lib/webgpu-v2';
 import { describeGPUCompletion, getAccelerationStatus, getGPUFallbackNotice } from './lib/gpu-ui';
 import { Sidebar, InputBar, ResultCard, ResultsTable, EmptyState, SearchProgress } from './components';
@@ -41,6 +43,8 @@ const withBasePath = (path: string) => {
 
 export default function CalculatorPage() {
   const [inputValue, setInputValue] = useState('');
+  const [searchMode, setSearchMode] = useState<SearchMode>('constant');
+  const [functionDataset, setFunctionDataset] = useState(DEFAULT_FUNCTION_DATASET);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [wasmLoaded, setWasmLoaded] = useState(false);
   const [gpuChecked, setGpuChecked] = useState(false);
@@ -70,6 +74,7 @@ export default function CalculatorPage() {
   const [manualError, setManualError] = useState('');
   const [earlyExitCRThreshold, setEarlyExitCRThreshold] = useState(0.9);
   const [lastSearchExact, setLastSearchExact] = useState(false);
+  const [lastSearchMode, setLastSearchMode] = useState<SearchMode>('constant');
   // Calculator button palette: enabled button names, all 36 by default
   const [enabledTokens, setEnabledTokens] = useState<string[]>(ALL_TOKENS);
   // Button count of the search that produced the current results (for CR)
@@ -110,6 +115,13 @@ export default function CalculatorPage() {
   };
   const enableAllTokens = () => setEnabledTokens(ALL_TOKENS);
   const hasConstants = enabledTokens.some(t => CALC4_CONSTS.includes(t));
+  const parsedFunctionDataset = useMemo(
+    () => parseFunctionDataset(functionDataset),
+    [functionDataset],
+  );
+  const canCalculate = searchMode === 'function'
+    ? parsedFunctionDataset.error === null
+    : hasConstants;
 
   const getCompressionRatio = (r: SearchResult): number => computeCR(r, lastSearchN);
 
@@ -273,9 +285,12 @@ export default function CalculatorPage() {
   }, []);
 
   const calculate = async () => {
-    if (!inputValue || !hasConstants) return;
+    if (!canCalculate || (searchMode === 'constant' && !inputValue)) return;
 
-    const zNum = parseFloat(inputValue);
+    const functionPoints = searchMode === 'function' ? parsedFunctionDataset.points : undefined;
+    const zNum = searchMode === 'function'
+      ? functionPoints?.[0]?.y ?? 0
+      : parseFloat(inputValue);
     if (!Number.isFinite(zNum)) {
       setSearchError('Enter a finite numeric value before starting the search.');
       setSearchPhase('error');
@@ -283,6 +298,7 @@ export default function CalculatorPage() {
     }
 
     const runId = ++searchRunIdRef.current;
+    setLastSearchMode(searchMode);
 
     setSearchPhase('running');
     setResults([]);
@@ -313,7 +329,7 @@ export default function CalculatorPage() {
     // Calculate precision based on error mode
     let deltaZNum: number;
     
-    if (errorMode === 'zero') {
+    if (searchMode === 'function' || errorMode === 'zero') {
       deltaZNum = 0;
     } else if (errorMode === 'manual' && manualError) {
       deltaZNum = parseFloat(manualError) || 0;
@@ -325,12 +341,18 @@ export default function CalculatorPage() {
     
     // Update precision display
     const relDeltaZ = zNum !== 0 ? deltaZNum / Math.abs(zNum) : 0;
-    setPrecision({
-      z: inputValue,
-      deltaZ: deltaZNum === 0 ? '0' : deltaZNum.toExponential(2),
-      relDeltaZ: relDeltaZ === 0 ? '0' : relDeltaZ.toExponential(2)
-    });
-    const exactSearch = deltaZNum === 0;
+    setPrecision(searchMode === 'function'
+      ? {
+          z: `f(x), ${functionPoints?.length ?? 0} points`,
+          deltaZ: 'MSE ≤ 1.00e-12',
+          relDeltaZ: 'weighted residuals',
+        }
+      : {
+          z: inputValue,
+          deltaZ: deltaZNum === 0 ? '0' : deltaZNum.toExponential(2),
+          relDeltaZ: relDeltaZ === 0 ? '0' : relDeltaZ.toExponential(2)
+        });
+    const exactSearch = searchMode === 'function' || deltaZNum === 0;
     setLastSearchExact(exactSearch);
     setSortColumn(exactSearch ? 'REL_ERR' : 'CR');
     setSortDirection(exactSearch ? 'asc' : 'desc');
@@ -348,7 +370,10 @@ export default function CalculatorPage() {
       funcs: CALC4_FUNCS.filter(t => enabledTokens.includes(t)),
       ops: CALC4_OPS.filter(t => enabledTokens.includes(t)),
     };
-    setLastSearchN(selection.consts.length + selection.funcs.length + selection.ops.length);
+    setLastSearchN(
+      selection.consts.length + selection.funcs.length + selection.ops.length
+        + (searchMode === 'function' ? 1 : 0),
+    );
 
     const shouldTryGPU = computeEngine === 'gpu' || (
       computeEngine === 'auto' && (!gpuChecked || gpuSupported)
@@ -376,6 +401,8 @@ export default function CalculatorPage() {
           calculator: selection,
           absoluteTolerance: deltaZNum,
           compressionRatioThreshold: earlyExitCRThreshold,
+          functionPoints,
+          functionErrorTolerance: 1e-12,
           ranking: exactSearch ? 'relative-error' : 'compression-ratio',
           maxEvaluations: BigInt(100_000_000),
           maxDurationMs: 30_000,
@@ -399,7 +426,9 @@ export default function CalculatorPage() {
           cpuId: -1,
           K: result.K,
           RPN: result.rpn,
-          result: String(result.value),
+          result: searchMode === 'function'
+            ? `MSE ${result.relativeError.toExponential(6)}`
+            : String(result.value),
           REL_ERR: result.relativeError,
           status: result.accepted ? 'SUCCESS' : 'K_BEST',
           compressionRatio: result.compressionRatio,
@@ -410,6 +439,7 @@ export default function CalculatorPage() {
           completedThroughK: summary.completedThroughK,
           evaluationCount: summary.uniqueEvaluations.toLocaleString('en-US'),
           resultCount: gpuResults.length,
+          overflowRetries: summary.overflowRetries,
         });
 
         setResults(gpuResults);
@@ -453,11 +483,21 @@ export default function CalculatorPage() {
     // simultaneously — no worker is married to a fixed slice, so uneven work
     // distribution (heavy gamma-chain structures, E-cores, tab throttling)
     // self-balances instead of leaving one lagging worker at the end.
-    const tasks = buildTaskQueue(searchDepth, selection);
+    const tasks = buildTaskQueue(searchDepth, selection, {
+      variableCount: searchMode === 'function' ? 1 : 0,
+      splitUnaryChain: searchMode !== 'function',
+    });
     const totalTasks = tasks.length;
     let nextTaskIndex = 0;
     let remainingTasks = totalTasks;
+    let currentWaveK = tasks[0]?.maxK ?? 0;
+    let waveEndIndex = 0;
+    while (waveEndIndex < tasks.length && tasks[waveEndIndex].maxK === currentWaveK) {
+      waveEndIndex++;
+    }
+    let remainingInWave = waveEndIndex;
     let aliveWorkers = 0;
+    let acceptedResultFound = false;
     const inFlight = new Map<number, SearchTask>();          // workerId -> running task
     const idlePool: { worker: Worker; workerId: number }[] = []; // parked workers (queue drained)
     const keepRow = createResultFilter();
@@ -479,7 +519,10 @@ export default function CalculatorPage() {
 
     const assignTask = (worker: Worker, workerId: number) => {
       if (searchEndedRef.current || isAbortedRef.current) return;
-      const task = tasks[nextTaskIndex];
+      // Preserve scientific minimality: no task at K+1 starts until every
+      // slice at K has completed. Workers still load-balance dynamically
+      // inside the active complexity level.
+      const task = nextTaskIndex < waveEndIndex ? tasks[nextTaskIndex] : undefined;
       if (!task) {
         // Queue drained; park this worker (it may be revived if another
         // worker dies and its task is requeued)
@@ -511,7 +554,9 @@ export default function CalculatorPage() {
         workerId,
         constList: task.constList,
         funcList: task.funcList,
-        opList: task.opList
+        opList: task.opList,
+        searchMode,
+        functionPoints,
       });
     };
 
@@ -530,10 +575,14 @@ export default function CalculatorPage() {
         if (!r || typeof r.RPN !== 'string') return;
         if (!keepRow(r.K, r.REL_ERR, r.RPN)) return;
         let numericValue: string;
-        try {
-          numericValue = evaluateRPN(r.RPN).toString();
-        } catch {
-          numericValue = 'N/A';
+        if (searchMode === 'function') {
+          numericValue = `MSE ${r.REL_ERR.toExponential(6)}`;
+        } else {
+          try {
+            numericValue = evaluateRPN(r.RPN).toString();
+          } catch {
+            numericValue = 'N/A';
+          }
         }
         newResults.push({
           cpuId: workerId,
@@ -550,10 +599,14 @@ export default function CalculatorPage() {
       const isSuccess = data.result === 'SUCCESS';
       if (data.result && data.RPN && (isSuccess || keepRow(data.K, data.REL_ERR, data.RPN))) {
         let numericValue: string;
-        try {
-          numericValue = evaluateRPN(data.RPN).toString();
-        } catch {
-          numericValue = 'N/A';
+        if (searchMode === 'function') {
+          numericValue = `MSE ${Number(data.REL_ERR).toExponential(6)}`;
+        } else {
+          try {
+            numericValue = evaluateRPN(data.RPN).toString();
+          } catch {
+            numericValue = 'N/A';
+          }
         }
         newResults.push({
           cpuId: workerId,
@@ -567,16 +620,28 @@ export default function CalculatorPage() {
       }
 
       if (newResults.length > 0) {
-        setResults(prev => [...prev, ...newResults]);
+        setResults(prev => {
+          const merged = new Map(prev.map(result => [`${result.K}:${result.RPN}`, result]));
+          for (const result of newResults) {
+            const key = `${result.K}:${result.RPN}`;
+            const existing = merged.get(key);
+            if (!existing || result.status === 'SUCCESS' || result.REL_ERR < existing.REL_ERR) {
+              merged.set(key, result);
+            }
+          }
+          return [...merged.values()];
+        });
       }
 
       if (isSuccess) {
+        acceptedResultFound = true;
         endSearch();
         return;
       }
 
       // Task finished without a definitive match — pull the next slice
       remainingTasks--;
+      remainingInWave--;
       setTaskProgress({
         done: totalTasks - remainingTasks,
         total: totalTasks,
@@ -584,6 +649,21 @@ export default function CalculatorPage() {
       });
       if (remainingTasks <= 0) {
         endSearch();
+        return;
+      }
+      if (remainingInWave <= 0) {
+        currentWaveK = tasks[nextTaskIndex]?.maxK ?? 0;
+        waveEndIndex = nextTaskIndex;
+        while (waveEndIndex < tasks.length && tasks[waveEndIndex].maxK === currentWaveK) {
+          waveEndIndex++;
+        }
+        remainingInWave = waveEndIndex - nextTaskIndex;
+
+        assignTask(worker, workerId);
+        const parkedWorkers = idlePool.splice(0);
+        parkedWorkers.forEach(({ worker: parkedWorker, workerId: parkedId }) => {
+          assignTask(parkedWorker, parkedId);
+        });
         return;
       }
       assignTask(worker, workerId);
@@ -600,7 +680,8 @@ export default function CalculatorPage() {
       const task = inFlight.get(workerId);
       if (task) {
         inFlight.delete(workerId);
-        tasks.push(task);
+        tasks.splice(nextTaskIndex, 0, task);
+        waveEndIndex++;
         const idle = idlePool.pop();
         if (idle) assignTask(idle.worker, idle.workerId);
       }
@@ -636,7 +717,9 @@ export default function CalculatorPage() {
     
     if (!isAbortedRef.current) {
       setTaskProgress(null);
-      setSearchDetail('The CPU/WASM engine completed the selected search space.');
+      setSearchDetail(acceptedResultFound
+        ? 'The CPU/WASM engine found a formula satisfying the strict acceptance criterion.'
+        : 'The CPU/WASM engine completed the selected search space.');
       setSearchPhase('complete');
     }
   };
@@ -728,8 +811,13 @@ export default function CalculatorPage() {
         <InputBar
           inputValue={inputValue}
           setInputValue={setInputValue}
+          searchMode={searchMode}
+          setSearchMode={setSearchMode}
+          functionDataset={functionDataset}
+          setFunctionDataset={setFunctionDataset}
+          functionDatasetError={parsedFunctionDataset.error}
           isCalculating={isCalculating}
-          canCalculate={hasConstants}
+          canCalculate={canCalculate}
           onCalculate={calculate}
           onReset={handleReset}
           accelerationStatus={accelerationStatus}
@@ -807,6 +895,10 @@ export default function CalculatorPage() {
               allResults={results}
               crThreshold={earlyExitCRThreshold}
               instructionCount={lastSearchN}
+              errorLabel={lastSearchMode === 'function' ? 'Weighted MSE' : 'Relative Error'}
+              valueLabel={lastSearchMode === 'function' ? 'Fit Metric' : 'Numeric Value'}
+              functionMode={lastSearchMode === 'function'}
+              functionErrorTolerance={1e-12}
             />
             {/* Results table */}
             <ResultsTable
@@ -818,6 +910,7 @@ export default function CalculatorPage() {
               sortDirection={sortDirection}
               setSortDirection={setSortDirection}
               instructionCount={lastSearchN}
+              errorLabel={lastSearchMode === 'function' ? 'MSE' : 'Rel. Error'}
             />
           </div>
         ) : searchFinished ? (
