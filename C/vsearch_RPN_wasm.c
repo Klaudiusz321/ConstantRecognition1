@@ -165,6 +165,29 @@ static char* vsearch_function_custom(
         ERROR_MSE, COMPARE_STRICT);
 }
 
+static char* vsearch_batch_custom(
+    const DataPoint* data, int n_data,
+    int MinK, int MaxK,
+    int cpu_id, int ncpus,
+    const char* const_list,
+    const char* fun_list,
+    const char* op_list,
+    double cr_threshold)
+{
+    ConstOp const_ops[MAX_OPS];
+    UnaryOp unary_ops[MAX_OPS];
+    BinaryOp binary_ops[MAX_OPS];
+    int n_const, n_unary, n_binary;
+    parse_calculator_lists(
+        const_list, fun_list, op_list,
+        const_ops, &n_const, unary_ops, &n_unary, binary_ops, &n_binary);
+
+    return vsearch_core(
+        MODE_BATCH, data, n_data, MinK, MaxK, cpu_id, ncpus,
+        const_ops, n_const, unary_ops, n_unary, binary_ops, n_binary,
+        ERROR_REL, COMPARE_STRICT, n_data, cr_threshold);
+}
+
 /* ============================================================================
  * WASM EXPORTED FUNCTIONS
  * ============================================================================ */
@@ -305,6 +328,82 @@ char* search_batch_wasm(
         CALC4_OPS,    CALC4_N_BINARY,
         ERROR_REL, COMPARE_STRICT);
     
+    free(data);
+    return result;
+}
+
+EMSCRIPTEN_KEEPALIVE
+char* search_batch_with_cr_wasm(
+    const double* x_values, const double* y_values, const double* dy_values,
+    int n_data,
+    int MinK, int MaxK,
+    int cpu_id, int ncpus,
+    double cr_threshold)
+{
+    DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
+    if (!data) return strdup("{\"error\":\"Memory allocation failed\"}");
+
+    for (int i = 0; i < n_data; i++) {
+        data[i].x = x_values[i];
+        data[i].y = y_values[i];
+        data[i].dy = (dy_values != NULL) ? dy_values[i] : 0.0;
+    }
+
+    char* result = vsearch_core(
+        MODE_BATCH, data, n_data, MinK, MaxK, cpu_id, ncpus,
+        CALC4_CONSTS, CALC4_N_CONST,
+        CALC4_FUNCS, CALC4_N_UNARY,
+        CALC4_OPS, CALC4_N_BINARY,
+        ERROR_REL, COMPARE_STRICT, n_data, cr_threshold);
+    free(data);
+    return result;
+}
+
+EMSCRIPTEN_KEEPALIVE
+char* search_batch_custom_wasm(
+    const double* x_values, const double* y_values, const double* dy_values,
+    int n_data,
+    int MinK, int MaxK,
+    int cpu_id, int ncpus,
+    const char* consts, const char* funcs, const char* ops)
+{
+    DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
+    if (!data) return strdup("{\"error\":\"Memory allocation failed\"}");
+
+    for (int i = 0; i < n_data; i++) {
+        data[i].x = x_values[i];
+        data[i].y = y_values[i];
+        data[i].dy = (dy_values != NULL) ? dy_values[i] : 0.0;
+    }
+
+    char* result = vsearch_batch_custom(
+        data, n_data, MinK, MaxK, cpu_id, ncpus,
+        consts, funcs, ops, 1.05);
+    free(data);
+    return result;
+}
+
+EMSCRIPTEN_KEEPALIVE
+char* search_batch_custom_with_cr_wasm(
+    const double* x_values, const double* y_values, const double* dy_values,
+    int n_data,
+    int MinK, int MaxK,
+    int cpu_id, int ncpus,
+    const char* consts, const char* funcs, const char* ops,
+    double cr_threshold)
+{
+    DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
+    if (!data) return strdup("{\"error\":\"Memory allocation failed\"}");
+
+    for (int i = 0; i < n_data; i++) {
+        data[i].x = x_values[i];
+        data[i].y = y_values[i];
+        data[i].dy = (dy_values != NULL) ? dy_values[i] : 0.0;
+    }
+
+    char* result = vsearch_batch_custom(
+        data, n_data, MinK, MaxK, cpu_id, ncpus,
+        consts, funcs, ops, cr_threshold);
     free(data);
     return result;
 }

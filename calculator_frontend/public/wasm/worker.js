@@ -89,6 +89,64 @@ function callFunctionSearch(task) {
     }
 }
 
+function callBatchSearch(task) {
+    const targets = Array.isArray(task.batchTargets) ? task.batchTargets : [];
+    if (targets.length < 2) throw new Error('Multiple-constant recognition requires at least two targets.');
+
+    const heapF64 = (typeof HEAPF64 !== 'undefined') ? HEAPF64 : Module.HEAPF64;
+    if (!heapF64 || typeof Module._malloc !== 'function') {
+        throw new Error('The WASM runtime does not expose FP64 data memory.');
+    }
+
+    const bytes = targets.length * Float64Array.BYTES_PER_ELEMENT;
+    const idPtr = Module._malloc(bytes);
+    const valuePtr = Module._malloc(bytes);
+    const dyPtr = Module._malloc(bytes);
+    if (!idPtr || !valuePtr || !dyPtr) {
+        if (idPtr) Module._free(idPtr);
+        if (valuePtr) Module._free(valuePtr);
+        if (dyPtr) Module._free(dyPtr);
+        throw new Error('Unable to allocate WASM memory for multiple targets.');
+    }
+
+    try {
+        heapF64.set(targets.map(target => target.id), idPtr / 8);
+        heapF64.set(targets.map(target => target.value), valuePtr / 8);
+        heapF64.set(targets.map(target => target.dy || 0), dyPtr / 8);
+
+        const restricted =
+            task.constList !== undefined || task.funcList !== undefined || task.opList !== undefined;
+        const supportsCustomCR = typeof Module._search_batch_custom_with_cr_wasm === 'function';
+        if (restricted && (supportsCustomCR || typeof Module._search_batch_custom_wasm === 'function')) {
+            return callSearch(supportsCustomCR ? 'search_batch_custom_with_cr_wasm' : 'search_batch_custom_wasm',
+                supportsCustomCR
+                    ? ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'string', 'string', 'string', 'number']
+                    : ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'string', 'string', 'string'],
+                [idPtr, valuePtr, dyPtr, targets.length,
+                 task.MinCodeLength, task.MaxCodeLength, task.cpuId, task.ncpus,
+                 task.constList || '', task.funcList || '', task.opList || '',
+                 ...(supportsCustomCR ? [task.earlyExitCRThreshold] : [])]);
+        }
+
+        if (typeof Module._search_batch_with_cr_wasm === 'function') {
+            return callSearch('search_batch_with_cr_wasm',
+                ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number'],
+                [idPtr, valuePtr, dyPtr, targets.length,
+                 task.MinCodeLength, task.MaxCodeLength, task.cpuId, task.ncpus,
+                 task.earlyExitCRThreshold]);
+        }
+
+        return callSearch('search_batch_wasm',
+            ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number'],
+            [idPtr, valuePtr, dyPtr, targets.length,
+             task.MinCodeLength, task.MaxCodeLength, task.cpuId, task.ncpus]);
+    } finally {
+        Module._free(idPtr);
+        Module._free(valuePtr);
+        Module._free(dyPtr);
+    }
+}
+
 function doWork(task) {
     const {
         z, inputPrecision, MinCodeLength, MaxCodeLength, cpuId, ncpus,
@@ -97,6 +155,9 @@ function doWork(task) {
     try {
         if (task.searchMode === 'function') {
             return callFunctionSearch(task);
+        }
+        if (task.searchMode === 'multiple') {
+            return callBatchSearch(task);
         }
 
         // Restricted-instruction-set task: user-disabled palette buttons or

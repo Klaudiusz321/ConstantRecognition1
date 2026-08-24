@@ -3,7 +3,15 @@
 // Error mode for uncertainty handling
 export type ErrorMode = 'zero' | 'automatic' | 'manual' | 'large_errors';
 
-export type SearchMode = 'constant' | 'function';
+export type SearchMode = 'constant' | 'multiple' | 'function';
+
+export interface BatchTarget {
+  /** Stable one-based identifier used to join worker results with the input row. */
+  id: number;
+  value: number;
+  /** Optional absolute uncertainty. Zero means an exact target. */
+  dy: number;
+}
 
 export interface FunctionPoint {
   x: number;
@@ -36,6 +44,9 @@ export interface SearchResult {
   compressionRatio?: number;
   fp32Evals?: number;
   fp64Evals?: number;
+  /** Present for MODE_BATCH results. */
+  targetId?: number;
+  target?: number;
 }
 
 export interface Filters {

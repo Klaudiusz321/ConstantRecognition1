@@ -12,6 +12,7 @@ import {
   SearchBackend,
   SearchPhase,
   SearchMode,
+  BatchTarget,
   SearchProgress as SearchProgressData,
 } from './lib/types';
 import { extractPrecision, evaluateRPN } from './lib/rpn';
@@ -20,10 +21,24 @@ import {
   CALC4_CONSTS, CALC4_FUNCS, CALC4_OPS
 } from './lib/taskQueue';
 import { getCompressionRatio as computeCR } from './lib/cr';
-import { DEFAULT_FUNCTION_DATASET, parseFunctionDataset } from './lib/search-contract';
+import {
+  DEFAULT_FUNCTION_DATASET,
+  DEFAULT_MULTIPLE_DATASET,
+  parseFunctionDataset,
+  parseMultipleConstantsDataset,
+} from './lib/search-contract';
 import { WebGPUConstantRecognizer, type GPUProgress } from './lib/webgpu-v2';
 import { describeGPUCompletion, getAccelerationStatus, getGPUFallbackNotice } from './lib/gpu-ui';
-import { Sidebar, InputBar, ResultCard, ResultsTable, EmptyState, SearchProgress } from './components';
+import {
+  Sidebar,
+  InputBar,
+  ResultCard,
+  ResultsTable,
+  EmptyState,
+  SearchProgress,
+  RecognitionWizard,
+  BatchSummary,
+} from './components';
 
 const ALL_TOKENS = [...CALC4_CONSTS, ...CALC4_FUNCS, ...CALC4_OPS];
 
@@ -43,8 +58,9 @@ const withBasePath = (path: string) => {
 
 export default function CalculatorPage() {
   const [inputValue, setInputValue] = useState('');
-  const [searchMode, setSearchMode] = useState<SearchMode>('constant');
+  const [searchMode, setSearchMode] = useState<SearchMode | null>(null);
   const [functionDataset, setFunctionDataset] = useState(DEFAULT_FUNCTION_DATASET);
+  const [multipleDataset, setMultipleDataset] = useState(DEFAULT_MULTIPLE_DATASET);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [wasmLoaded, setWasmLoaded] = useState(false);
   const [gpuChecked, setGpuChecked] = useState(false);
@@ -75,6 +91,7 @@ export default function CalculatorPage() {
   const [earlyExitCRThreshold, setEarlyExitCRThreshold] = useState(0.9);
   const [lastSearchExact, setLastSearchExact] = useState(false);
   const [lastSearchMode, setLastSearchMode] = useState<SearchMode>('constant');
+  const [lastBatchTargets, setLastBatchTargets] = useState<BatchTarget[]>([]);
   // Calculator button palette: enabled button names, all 36 by default
   const [enabledTokens, setEnabledTokens] = useState<string[]>(ALL_TOKENS);
   // Button count of the search that produced the current results (for CR)
@@ -119,9 +136,17 @@ export default function CalculatorPage() {
     () => parseFunctionDataset(functionDataset),
     [functionDataset],
   );
+  const parsedMultipleDataset = useMemo(
+    () => parseMultipleConstantsDataset(multipleDataset),
+    [multipleDataset],
+  );
   const canCalculate = searchMode === 'function'
     ? parsedFunctionDataset.error === null
-    : hasConstants;
+    : searchMode === 'multiple'
+      ? hasConstants && parsedMultipleDataset.error === null
+      : searchMode === 'constant'
+        ? hasConstants
+        : false;
 
   const getCompressionRatio = (r: SearchResult): number => computeCR(r, lastSearchN);
 
@@ -285,12 +310,15 @@ export default function CalculatorPage() {
   }, []);
 
   const calculate = async () => {
-    if (!canCalculate || (searchMode === 'constant' && !inputValue)) return;
+    if (!searchMode || !canCalculate || (searchMode === 'constant' && !inputValue)) return;
 
     const functionPoints = searchMode === 'function' ? parsedFunctionDataset.points : undefined;
+    const batchTargets = searchMode === 'multiple' ? parsedMultipleDataset.targets : undefined;
     const zNum = searchMode === 'function'
       ? functionPoints?.[0]?.y ?? 0
-      : parseFloat(inputValue);
+      : searchMode === 'multiple'
+        ? batchTargets?.[0]?.value ?? 0
+        : parseFloat(inputValue);
     if (!Number.isFinite(zNum)) {
       setSearchError('Enter a finite numeric value before starting the search.');
       setSearchPhase('error');
@@ -299,6 +327,7 @@ export default function CalculatorPage() {
 
     const runId = ++searchRunIdRef.current;
     setLastSearchMode(searchMode);
+    setLastBatchTargets(batchTargets ? [...batchTargets] : []);
 
     setSearchPhase('running');
     setResults([]);
@@ -329,7 +358,7 @@ export default function CalculatorPage() {
     // Calculate precision based on error mode
     let deltaZNum: number;
     
-    if (searchMode === 'function' || errorMode === 'zero') {
+    if (searchMode !== 'constant' || errorMode === 'zero') {
       deltaZNum = 0;
     } else if (errorMode === 'manual' && manualError) {
       deltaZNum = parseFloat(manualError) || 0;
@@ -347,12 +376,18 @@ export default function CalculatorPage() {
           deltaZ: 'MSE ≤ 1.00e-12',
           relDeltaZ: 'weighted residuals',
         }
+      : searchMode === 'multiple'
+        ? {
+            z: `${batchTargets?.length ?? 0} numerical targets`,
+            deltaZ: 'per-row dz',
+            relDeltaZ: 'evaluated independently',
+          }
       : {
           z: inputValue,
           deltaZ: deltaZNum === 0 ? '0' : deltaZNum.toExponential(2),
           relDeltaZ: relDeltaZ === 0 ? '0' : relDeltaZ.toExponential(2)
         });
-    const exactSearch = searchMode === 'function' || deltaZNum === 0;
+    const exactSearch = searchMode === 'function' || searchMode === 'multiple' || deltaZNum === 0;
     setLastSearchExact(exactSearch);
     setSortColumn(exactSearch ? 'REL_ERR' : 'CR');
     setSortDirection(exactSearch ? 'asc' : 'desc');
@@ -394,6 +429,85 @@ export default function CalculatorPage() {
         // Do not claim a GPU backend until device creation, shader compilation
         // and the real dispatch/readback self-test have all succeeded.
         setSearchBackend('gpu');
+
+        if (searchMode === 'multiple' && batchTargets) {
+          const batchGPUResults: SearchResult[] = [];
+          let totalEvaluations = BigInt(0);
+          let totalOverflowRetries = 0;
+          let partial = false;
+
+          for (let targetIndex = 0; targetIndex < batchTargets.length; targetIndex++) {
+            const target = batchTargets[targetIndex];
+            const targetSummary = await recognizer.search({
+              target: target.value,
+              minK: 1,
+              maxK: searchDepth,
+              calculator: selection,
+              absoluteTolerance: target.dy,
+              compressionRatioThreshold: earlyExitCRThreshold,
+              ranking: 'relative-error',
+              maxEvaluations: BigInt(100_000_000),
+              maxDurationMs: 30_000,
+              topN: 20,
+              signal: controller.signal,
+              onProgress: (progress: GPUProgress) => {
+                if (searchRunIdRef.current !== runId) return;
+                setTaskProgress({
+                  done: targetIndex,
+                  total: batchTargets.length,
+                  complexityK: progress.K,
+                  evaluations: progress.uniqueEvaluations.toLocaleString('en-US'),
+                });
+              },
+            });
+
+            totalEvaluations += targetSummary.uniqueEvaluations;
+            totalOverflowRetries += targetSummary.overflowRetries;
+            if (!['completed', 'accepted-at-minimal-k'].includes(targetSummary.stopReason)) {
+              partial = true;
+            }
+
+            const best = targetSummary.results.find(result => result.accepted)
+              ?? targetSummary.results[0];
+            if (best) {
+              batchGPUResults.push({
+                cpuId: -1,
+                K: best.K,
+                RPN: best.rpn,
+                result: String(best.value),
+                REL_ERR: best.relativeError,
+                status: best.accepted ? 'SUCCESS' : 'K_BEST',
+                compressionRatio: best.compressionRatio,
+                targetId: target.id,
+                target: target.value,
+              });
+            }
+            setTaskProgress({
+              done: targetIndex + 1,
+              total: batchTargets.length,
+              complexityK: targetSummary.completedThroughK,
+              evaluations: totalEvaluations.toLocaleString('en-US'),
+            });
+          }
+
+          gpuAbortRef.current = null;
+          if (searchRunIdRef.current !== runId || isAbortedRef.current) return;
+          const acceptedCount = batchGPUResults.filter(result => result.status === 'SUCCESS').length;
+          const recoveryNote = totalOverflowRetries > 0
+            ? ` Buffer recovery reran ${totalOverflowRetries} overflowing tile${totalOverflowRetries === 1 ? '' : 's'}.`
+            : '';
+          setResults(batchGPUResults);
+          setTaskProgress(null);
+          setSearchNotice(null);
+          setSearchDetail(
+            `GPU processed ${batchTargets.length} targets independently; ` +
+            `${acceptedCount} satisfied the acceptance criterion after CPU verification.${recoveryNote}`,
+          );
+          stopTimer();
+          setSearchPhase(partial ? 'partial' : 'complete');
+          return;
+        }
+
         const summary = await recognizer.search({
           target: zNum,
           minK: 1,
@@ -501,6 +615,7 @@ export default function CalculatorPage() {
     const inFlight = new Map<number, SearchTask>();          // workerId -> running task
     const idlePool: { worker: Worker; workerId: number }[] = []; // parked workers (queue drained)
     const keepRow = createResultFilter();
+    const batchBestByTarget = new Map<number, SearchResult>();
 
     setTaskProgress({ done: 0, total: totalTasks, complexityK: 1 });
 
@@ -557,6 +672,7 @@ export default function CalculatorPage() {
         opList: task.opList,
         searchMode,
         functionPoints,
+        batchTargets,
       });
     };
 
@@ -571,8 +687,53 @@ export default function CalculatorPage() {
       const newResults: SearchResult[] = [];
       const rows = Array.isArray(data.results) ? data.results : [];
 
-      rows.forEach((r: { K: number; RPN: string; result: string; REL_ERR: number; status?: string; COMPRESSION_RATIO?: number }) => {
+      rows.forEach((r: {
+        K: number;
+        RPN: string;
+        result: string;
+        REL_ERR: number;
+        status?: string;
+        COMPRESSION_RATIO?: number;
+        target_id?: number;
+        target?: number;
+      }) => {
         if (!r || typeof r.RPN !== 'string') return;
+        if (searchMode === 'multiple') {
+          if (!Number.isInteger(r.target_id)) return;
+          const targetId = Number(r.target_id);
+          const target = batchTargets?.find(item => item.id === targetId);
+          if (!target) return;
+          let numericValue = 'N/A';
+          try {
+            numericValue = evaluateRPN(r.RPN).toString();
+          } catch {
+            // Keep the RPN and error even if display evaluation is unavailable.
+          }
+          const candidate: SearchResult = {
+            cpuId: workerId,
+            K: r.K,
+            RPN: r.RPN,
+            result: numericValue,
+            REL_ERR: Number(r.REL_ERR),
+            status: r.result === 'SUCCESS' ? 'SUCCESS' : 'K_BEST',
+            compressionRatio: r.COMPRESSION_RATIO,
+            targetId,
+            target: target.value,
+          };
+          const existing = batchBestByTarget.get(targetId);
+          const candidatePriority = candidate.status === 'SUCCESS' ? 0 : 1;
+          const existingPriority = existing?.status === 'SUCCESS' ? 0 : 1;
+          if (
+            !existing ||
+            candidatePriority < existingPriority ||
+            (candidatePriority === existingPriority && candidate.REL_ERR < existing.REL_ERR) ||
+            (candidatePriority === existingPriority && candidate.REL_ERR === existing.REL_ERR && candidate.K < existing.K)
+          ) {
+            batchBestByTarget.set(targetId, candidate);
+            newResults.push(candidate);
+          }
+          return;
+        }
         if (!keepRow(r.K, r.REL_ERR, r.RPN)) return;
         let numericValue: string;
         if (searchMode === 'function') {
@@ -596,8 +757,13 @@ export default function CalculatorPage() {
       });
 
       // Handle final result (SUCCESS/FAILURE/ABORTED) from top-level data
-      const isSuccess = data.result === 'SUCCESS';
-      if (data.result && data.RPN && (isSuccess || keepRow(data.K, data.REL_ERR, data.RPN))) {
+      const batchIsComplete = batchTargets !== undefined &&
+        batchBestByTarget.size === batchTargets.length &&
+        [...batchBestByTarget.values()].every(result => result.status === 'SUCCESS');
+      const isSuccess = searchMode === 'multiple'
+        ? batchIsComplete
+        : data.result === 'SUCCESS';
+      if (searchMode !== 'multiple' && data.result && data.RPN && (isSuccess || keepRow(data.K, data.REL_ERR, data.RPN))) {
         let numericValue: string;
         if (searchMode === 'function') {
           numericValue = `MSE ${Number(data.REL_ERR).toExponential(6)}`;
@@ -620,7 +786,11 @@ export default function CalculatorPage() {
       }
 
       if (newResults.length > 0) {
-        setResults(prev => {
+        if (searchMode === 'multiple') {
+          setResults([...batchBestByTarget.values()].sort(
+            (a, b) => (a.targetId ?? 0) - (b.targetId ?? 0),
+          ));
+        } else setResults(prev => {
           const merged = new Map(prev.map(result => [`${result.K}:${result.RPN}`, result]));
           for (const result of newResults) {
             const key = `${result.K}:${result.RPN}`;
@@ -670,8 +840,8 @@ export default function CalculatorPage() {
     };
 
     const onWorkerError = (worker: Worker, workerId: number) => (error: ErrorEvent) => {
-      console.error(`Worker ${workerId} error:`, error.message || error);
       if (searchEndedRef.current || isAbortedRef.current) return;
+      console.error(`Worker ${workerId} error:`, error.message || error);
       aliveWorkers--;
       worker.terminate();
       workersRef.current = workersRef.current.filter(w => w !== worker);
@@ -717,9 +887,19 @@ export default function CalculatorPage() {
     
     if (!isAbortedRef.current) {
       setTaskProgress(null);
-      setSearchDetail(acceptedResultFound
-        ? 'The CPU/WASM engine found a formula satisfying the strict acceptance criterion.'
-        : 'The CPU/WASM engine completed the selected search space.');
+      if (searchMode === 'multiple' && batchTargets) {
+        const acceptedCount = [...batchBestByTarget.values()].filter(
+          result => result.status === 'SUCCESS',
+        ).length;
+        setSearchDetail(
+          `The CPU/WASM batch engine evaluated the shared search space once for ` +
+          `${batchTargets.length} targets; ${acceptedCount} satisfied the acceptance criterion.`,
+        );
+      } else {
+        setSearchDetail(acceptedResultFound
+          ? 'The CPU/WASM engine found a formula satisfying the strict acceptance criterion.'
+          : 'The CPU/WASM engine completed the selected search space.');
+      }
       setSearchPhase('complete');
     }
   };
@@ -750,7 +930,13 @@ export default function CalculatorPage() {
 
   const handleReset = () => {
     handleAbort();
-    setInputValue('');
+    if (searchMode === 'function') {
+      setFunctionDataset(DEFAULT_FUNCTION_DATASET);
+    } else if (searchMode === 'multiple') {
+      setMultipleDataset(DEFAULT_MULTIPLE_DATASET);
+    } else {
+      setInputValue('');
+    }
     setResults([]);
     setPrecision({});
     setSortColumn(null);
@@ -767,6 +953,32 @@ export default function CalculatorPage() {
 
   const handleExampleClick = (value: string) => {
     setInputValue(value);
+  };
+
+  const clearModeOutput = () => {
+    setResults([]);
+    setPrecision({});
+    setTaskProgress(null);
+    setSortColumn(null);
+    setSortDirection('asc');
+    setSearchPhase('idle');
+    setSearchError(null);
+    setSearchNotice(null);
+    setSearchDetail(null);
+    setSearchBackend(null);
+    setElapsedTime(0);
+  };
+
+  const handleModeSelect = (mode: SearchMode) => {
+    if (isCalculating) return;
+    clearModeOutput();
+    setSearchMode(mode);
+  };
+
+  const handleOpenWizard = () => {
+    if (isCalculating) return;
+    clearModeOutput();
+    setSearchMode(null);
   };
 
   return (
@@ -804,24 +1016,31 @@ export default function CalculatorPage() {
         enabledTokens={enabledTokens}
         onToggleToken={toggleToken}
         onEnableAll={enableAllTokens}
+        searchMode={searchMode}
       />
 
       {/* Main content */}
       <main className="flex-1 flex flex-col overflow-hidden">
-        <InputBar
-          inputValue={inputValue}
-          setInputValue={setInputValue}
-          searchMode={searchMode}
-          setSearchMode={setSearchMode}
-          functionDataset={functionDataset}
-          setFunctionDataset={setFunctionDataset}
-          functionDatasetError={parsedFunctionDataset.error}
-          isCalculating={isCalculating}
-          canCalculate={canCalculate}
-          onCalculate={calculate}
-          onReset={handleReset}
-          accelerationStatus={accelerationStatus}
-        />
+        {searchMode && (
+          <InputBar
+            inputValue={inputValue}
+            setInputValue={setInputValue}
+            searchMode={searchMode}
+            setSearchMode={handleModeSelect}
+            functionDataset={functionDataset}
+            setFunctionDataset={setFunctionDataset}
+            functionDatasetError={parsedFunctionDataset.error}
+            multipleDataset={multipleDataset}
+            setMultipleDataset={setMultipleDataset}
+            multipleDatasetError={parsedMultipleDataset.error}
+            onOpenWizard={handleOpenWizard}
+            isCalculating={isCalculating}
+            canCalculate={canCalculate}
+            onCalculate={calculate}
+            onReset={handleReset}
+            accelerationStatus={accelerationStatus}
+          />
+        )}
 
         {searchError && (
           <div
@@ -848,7 +1067,9 @@ export default function CalculatorPage() {
           </div>
         )}
 
-        {isCalculating ? (
+        {!searchMode ? (
+          <RecognitionWizard onSelect={handleModeSelect} />
+        ) : isCalculating ? (
           <SearchProgress
             backend={searchBackend}
             elapsedTime={elapsedTime}
@@ -856,7 +1077,7 @@ export default function CalculatorPage() {
             precision={precision.deltaZ}
             onAbort={handleAbort}
           />
-        ) : results.length > 0 && bestResult ? (
+        ) : results.length > 0 && (lastSearchMode === 'multiple' || bestResult) ? (
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col bg-white dark:bg-[#1a1a1d]">
             {/* Search summary */}
             {searchFinished && !isCalculating && (
@@ -889,17 +1110,21 @@ export default function CalculatorPage() {
                 </div>
               </div>
             )}
-            {/* Best result card */}
-            <ResultCard
-              result={bestResult}
-              allResults={results}
-              crThreshold={earlyExitCRThreshold}
-              instructionCount={lastSearchN}
-              errorLabel={lastSearchMode === 'function' ? 'Weighted MSE' : 'Relative Error'}
-              valueLabel={lastSearchMode === 'function' ? 'Fit Metric' : 'Numeric Value'}
-              functionMode={lastSearchMode === 'function'}
-              functionErrorTolerance={1e-12}
-            />
+            {/* Mode-specific summary */}
+            {lastSearchMode === 'multiple' ? (
+              <BatchSummary targets={lastBatchTargets} results={results} />
+            ) : bestResult ? (
+              <ResultCard
+                result={bestResult}
+                allResults={results}
+                crThreshold={earlyExitCRThreshold}
+                instructionCount={lastSearchN}
+                errorLabel={lastSearchMode === 'function' ? 'Weighted MSE' : 'Relative Error'}
+                valueLabel={lastSearchMode === 'function' ? 'Fit Metric' : 'Numeric Value'}
+                functionMode={lastSearchMode === 'function'}
+                functionErrorTolerance={1e-12}
+              />
+            ) : null}
             {/* Results table */}
             <ResultsTable
               results={results}
@@ -911,6 +1136,7 @@ export default function CalculatorPage() {
               setSortDirection={setSortDirection}
               instructionCount={lastSearchN}
               errorLabel={lastSearchMode === 'function' ? 'MSE' : 'Rel. Error'}
+              searchMode={lastSearchMode}
             />
           </div>
         ) : searchFinished ? (
@@ -936,7 +1162,7 @@ export default function CalculatorPage() {
             </div>
           </div>
         ) : (
-          <EmptyState onExampleClick={handleExampleClick} />
+          <EmptyState searchMode={searchMode} onExampleClick={handleExampleClick} />
         )}
       </main>
     </div>

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
-import { ActiveWorker, Precision, ErrorMode, ComputeEngine } from '../lib/types';
+import { ActiveWorker, Precision, ErrorMode, ComputeEngine, type SearchMode } from '../lib/types';
 import { formatGPUAdapterName, formatGPUError } from '../lib/gpu-ui';
 import { getCalculatorById, DEFAULT_CALCULATOR_ID } from '../lib/calculators';
 import { CalculatorPalette } from './CalculatorPalette';
@@ -41,6 +41,7 @@ interface SidebarProps {
   enabledTokens: string[];
   onToggleToken: (token: string) => void;
   onEnableAll: () => void;
+  searchMode: SearchMode | null;
 }
 
 export function Sidebar({
@@ -75,6 +76,7 @@ export function Sidebar({
   enabledTokens,
   onToggleToken,
   onEnableAll,
+  searchMode,
 }: SidebarProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const calculator = getCalculatorById(DEFAULT_CALCULATOR_ID);
@@ -86,7 +88,9 @@ export function Sidebar({
   const earlyExitCRNote = toleranceSearchActive
     ? 'Applies to CPU/WASM and CPU-verified GPU search.'
     : 'Ignored for exact search (± 0). Use Auto or Manual uncertainty to enable it.';
-  const noConstants = !enabledTokens.some((t) => calculator.constantsCore.includes(t) || calculator.constantsRedundant.includes(t));
+  const noConstants = searchMode !== 'function' && !enabledTokens.some(
+    (t) => calculator.constantsCore.includes(t) || calculator.constantsRedundant.includes(t),
+  );
   const friendlyAdapterName = formatGPUAdapterName(gpuAdapterName);
   const friendlyGPUError = formatGPUError(gpuError);
 
@@ -253,6 +257,21 @@ export function Sidebar({
               onEnableAll={onEnableAll}
               disabled={isCalculating}
             />
+            {searchMode === 'function' && (
+              <p className="text-[11px] leading-4 text-blue-700 dark:text-blue-300">
+                Variable x is enabled automatically. Constants remain optional; selected functions and operators define the function search space.
+              </p>
+            )}
+            {searchMode === 'multiple' && (
+              <p className="text-[11px] leading-4 text-blue-700 dark:text-blue-300">
+                The same selected constants, functions and operators are evaluated against every target. Variable x is disabled.
+              </p>
+            )}
+            {searchMode === 'constant' && (
+              <p className="text-[11px] leading-4 text-gray-500 dark:text-gray-400">
+                Expressions use only the selected constants, functions and operators. Variable x is disabled.
+              </p>
+            )}
             {noConstants && (
               <p className="text-[11px] text-amber-600 dark:text-amber-400">
                 Enable at least one constant — formulas cannot be built without one.
@@ -398,8 +417,11 @@ export function Sidebar({
                 </button>
               </div>
 
-              {/* Uncertainty Mode */}
-              <div className="space-y-2">
+              {/* Global uncertainty belongs only to a single target. Batch and
+                  function modes define uncertainty per input row. */}
+              {searchMode === 'constant' && (
+                <>
+                <div className="space-y-2">
                 <label className="text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
                   Uncertainty (±)
                 </label>
@@ -460,9 +482,9 @@ export function Sidebar({
                     <span className="text-xs text-gray-400">(fuzzy search)</span>
                   </label>
                 </div>
-              </div>
+                </div>
 
-              <div className="space-y-2">
+                <div className="space-y-2">
                 <label className="text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
                   Early Exit CR
                 </label>
@@ -497,7 +519,9 @@ export function Sidebar({
                 >
                   {earlyExitCRNote}
                 </p>
-              </div>
+                </div>
+                </>
+              )}
             </div>
           )}
 

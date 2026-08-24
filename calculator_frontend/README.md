@@ -6,6 +6,14 @@ This is a Next.js 16 frontend for the constant recognizer. The project is config
 - Install dependencies: `npm install`
 - Start the dev server: `npm run dev`
 
+The calculator opens with a three-mode recognition wizard:
+
+- one constant: one `z` value with the existing global uncertainty controls;
+- multiple constants: at least two `z[, dz]` rows, executed through shared CPU/WASM `MODE_BATCH` or independent GPU searches with CPU verification;
+- function: at least two `x, y[, dy]` rows, with the `x` terminal enabled automatically and weighted-MSE reporting.
+
+The compute engine can be selected manually as Auto, GPU, or CPU. Run `npm test`, `npm run test:wasm-batch`, and `npm run build` before publishing frontend or WASM changes.
+
 ## Static production build
 - Build the site: `npm run build`
   - The static files are written to `out/`

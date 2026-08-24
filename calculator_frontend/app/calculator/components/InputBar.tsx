@@ -17,6 +17,10 @@ interface InputBarProps {
   functionDataset: string;
   setFunctionDataset: (value: string) => void;
   functionDatasetError?: string | null;
+  multipleDataset: string;
+  setMultipleDataset: (value: string) => void;
+  multipleDatasetError?: string | null;
+  onOpenWizard: () => void;
 }
 
 export function InputBar({
@@ -32,6 +36,10 @@ export function InputBar({
   functionDataset,
   setFunctionDataset,
   functionDatasetError,
+  multipleDataset,
+  setMultipleDataset,
+  multipleDatasetError,
+  onOpenWizard,
 }: InputBarProps) {
   const statusClasses = {
     active: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300',
@@ -43,27 +51,57 @@ export function InputBar({
   return (
     <div className="p-4 sm:p-6 bg-white dark:bg-[#1a1a1d] border-b border-gray-200 dark:border-[#2a2a2e]">
       <div className="max-w-4xl mx-auto">
-        <div className="mb-3 inline-flex rounded-lg bg-gray-100 p-1 dark:bg-[#111113]" role="group" aria-label="Search mode">
-          {([
-            { value: 'constant' as const, label: 'Identify constant' },
-            { value: 'function' as const, label: 'Identify f(x)' },
-          ]).map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => setSearchMode(option.value)}
-              disabled={isCalculating}
-              aria-pressed={searchMode === option.value}
-              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
-                searchMode === option.value
-                  ? 'bg-white text-[#0066cc] shadow-sm dark:bg-[#2a2a2e] dark:text-blue-300'
-                  : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="inline-flex rounded-lg bg-gray-100 p-1 dark:bg-[#111113]" role="group" aria-label="Search mode">
+            {([
+              { value: 'constant' as const, label: 'One constant' },
+              { value: 'multiple' as const, label: 'Multiple constants' },
+              { value: 'function' as const, label: 'Function f(x)' },
+            ]).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setSearchMode(option.value)}
+                disabled={isCalculating}
+                aria-pressed={searchMode === option.value}
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  searchMode === option.value
+                    ? 'bg-white text-[#0066cc] shadow-sm dark:bg-[#2a2a2e] dark:text-blue-300'
+                    : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={onOpenWizard}
+            disabled={isCalculating}
+            className="text-xs font-medium text-gray-500 underline-offset-4 hover:text-[#0066cc] hover:underline disabled:opacity-50 dark:text-gray-400"
+          >
+            Back to wizard
+          </button>
         </div>
+        {searchMode === 'multiple' && (
+          <div className="mb-3">
+            <label htmlFor="multiple-dataset" className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+              Numerical targets — one row per z[, dz]
+            </label>
+            <textarea
+              id="multiple-dataset"
+              value={multipleDataset}
+              onChange={(event) => setMultipleDataset(event.target.value)}
+              disabled={isCalculating}
+              rows={4}
+              spellCheck={false}
+              className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-900 focus:border-[#0066cc] focus:outline-none focus:ring-1 focus:ring-[#0066cc] dark:border-[#2a2a2e] dark:bg-[#111113] dark:text-white"
+            />
+            <p className={`mt-1 text-xs ${multipleDatasetError ? 'text-red-600 dark:text-red-400' : 'text-gray-500'}`}>
+              {multipleDatasetError ?? 'Optional dz is an absolute uncertainty for that target.'}
+            </p>
+          </div>
+        )}
         {searchMode === 'function' && (
           <div className="mb-3">
             <label htmlFor="function-dataset" className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
@@ -95,16 +133,26 @@ export function InputBar({
                 className="w-full px-4 py-3 rounded-lg bg-gray-50 dark:bg-[#111113] border border-gray-200 dark:border-[#2a2a2e] text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:border-[#0066cc] focus:outline-none focus:ring-1 focus:ring-[#0066cc] font-mono text-lg"
                 onKeyDown={(e) => e.key === 'Enter' && onCalculate()}
               />
-            ) : (
+            ) : searchMode === 'function' ? (
               <div className="flex min-h-12 items-center rounded-lg border border-gray-200 bg-gray-50 px-4 text-sm text-gray-600 dark:border-[#2a2a2e] dark:bg-[#111113] dark:text-gray-300">
                 Search for one RPN expression containing x that fits every data point.
+              </div>
+            ) : (
+              <div className="flex min-h-12 items-center rounded-lg border border-gray-200 bg-gray-50 px-4 text-sm text-gray-600 dark:border-[#2a2a2e] dark:bg-[#111113] dark:text-gray-300">
+                Search the selected calculator once and match expressions against every target.
               </div>
             )}
           </div>
           <div className="flex gap-2">
             <button
               onClick={onCalculate}
-              disabled={(searchMode === 'constant' && !inputValue) || isCalculating || !canCalculate || Boolean(functionDatasetError)}
+              disabled={
+                (searchMode === 'constant' && !inputValue) ||
+                isCalculating ||
+                !canCalculate ||
+                Boolean(functionDatasetError) ||
+                Boolean(multipleDatasetError)
+              }
               title={canCalculate ? undefined : 'Enable at least one constant in the calculator palette'}
               className="flex-1 sm:flex-none px-6 py-3 bg-[#0066cc] hover:bg-[#0052a3] disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed"
             >

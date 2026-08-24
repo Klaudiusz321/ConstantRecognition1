@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { SearchResult, Filters } from '../lib/types';
+import { SearchResult, Filters, type SearchMode } from '../lib/types';
 import { rpnToMathematica, createWolframLink, rpnToLatex } from '../lib/rpn';
 import { getCompressionRatio as computeCR } from '../lib/cr';
 import { copyTextToClipboard } from '../lib/clipboard';
@@ -17,6 +17,7 @@ interface ResultsTableProps {
   setSortDirection: (direction: 'asc' | 'desc') => void;
   instructionCount?: number; // enabled calculator buttons (36 = full CALC4)
   errorLabel?: string;
+  searchMode?: SearchMode;
 }
 
 function renderSortIcon(
@@ -40,6 +41,7 @@ export function ResultsTable({
   setSortDirection,
   instructionCount = 36,
   errorLabel = 'Rel. Error',
+  searchMode = 'constant',
 }: ResultsTableProps) {
   const [copyFeedback, setCopyFeedback] = useState<{ id: string; state: 'copied' | 'failed' } | null>(null);
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -73,7 +75,9 @@ export function ResultsTable({
   };
 
   // Find max CR among all results (for highlighting best match)
-  const maxCR = results.length > 0 
+  // A batch contains independent targets, so one global "best CR" badge would
+  // incorrectly compare unrelated recognition problems.
+  const maxCR = searchMode !== 'multiple' && results.length > 0
     ? Math.max(...results.map(r => getCompressionRatio(r)))
     : 0;
 
@@ -260,6 +264,7 @@ export function ResultsTable({
           <thead className="bg-gray-50 dark:bg-[#111113] sticky top-0">
             <tr className="text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider text-left">
               <th className="p-3 w-28">Search engine</th>
+              {searchMode === 'multiple' && <th className="p-3 w-32">Target</th>}
               <th 
                 className="p-3 w-20 cursor-pointer hover:text-[#0066cc] select-none"
                 onClick={() => handleSort('K')}
@@ -313,6 +318,12 @@ export function ResultsTable({
                     {r.cpuId < 0 ? 'GPU + CPU' : `CPU ${r.cpuId}`}
                   </span>
                 </td>
+                {searchMode === 'multiple' && (
+                  <td className="p-3 font-mono text-xs text-gray-700 dark:text-gray-300">
+                    <span className="block text-[10px] text-gray-400">#{r.targetId ?? '—'}</span>
+                    <span className="block truncate" title={String(r.target ?? '')}>{r.target ?? '—'}</span>
+                  </td>
+                )}
                 <td className="p-3 font-mono font-medium text-gray-900 dark:text-white">{r.K}</td>
                 <td className="p-3">
                   <a 
@@ -372,7 +383,7 @@ export function ResultsTable({
             );})}
             {filteredAndSortedResults.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-gray-500 dark:text-gray-500">
+                <td colSpan={searchMode === 'multiple' ? 9 : 8} className="px-4 py-8 text-center text-gray-500 dark:text-gray-500">
                   No matching results found
                 </td>
               </tr>

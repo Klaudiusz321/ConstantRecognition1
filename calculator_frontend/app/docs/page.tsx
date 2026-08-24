@@ -4,7 +4,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Method Notes",
   description:
-    "Scientific documentation for inverse RPN recognition of constants and univariate functions, including uncertainty, MSE, code length K, and verification.",
+    "Scientific documentation for inverse RPN recognition of one constant, batches of constants, and univariate functions, including uncertainty, MSE, code length K, and verification.",
   alternates: {
     canonical: "/docs",
   },
@@ -12,12 +12,12 @@ export const metadata: Metadata = {
 
 const workflow = [
   {
-    title: "Choose a numerical target z",
-    body: "Use a value produced by a calculation, measurement, integral, sum, simulation, or exercise. Do not supply more digits than are meaningful.",
+    title: "Choose the recognition task",
+    body: "The opening wizard selects one numerical target, a batch of independent targets, or one function fitted to x,y observations.",
   },
   {
-    title: "Set the uncertainty",
-    body: "When z is known only approximately, give an error estimate. Exact-looking decimal input can otherwise produce misleading overfitted formulas.",
+    title: "Enter data and uncertainty",
+    body: "Use values produced by calculations or measurements. Give dz per numerical target or dy per function observation when the data are approximate.",
   },
   {
     title: "Set maximum code length K",
@@ -37,6 +37,7 @@ const notation = [
   ["RPN", "reverse Polish notation button sequence"],
   ["CR", "compression-style ranking signal balancing error and length"],
   ["x, y", "input and observed output for univariate function recognition"],
+  ["target_id", "stable input-row identifier in a multiple-constant report"],
   ["dy", "optional non-negative uncertainty used to scale a function residual"],
   ["MSE", "mean squared residual; with dy, mean of ((f(x)-y)/dy)^2"],
 ];
@@ -86,8 +87,9 @@ export default function DocsPage() {
           <p className="mt-6 max-w-3xl text-lg leading-8 text-slate-600">
             The calculator reverses the usual numerical workflow. Instead of
             entering a formula and obtaining a number, one enters a numerical
-            target—or a table of x,y observations—and searches for short
-            calculator programs that reproduce it.
+            target, a list of independent targets, or a table of x,y
+            observations—and searches for short calculator programs that
+            reproduce the selected data.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
@@ -167,7 +169,81 @@ export default function DocsPage() {
         </div>
       </section>
 
-      <section id="functions" className="px-4 py-16 sm:px-6 lg:px-8">
+      <section id="recognition-modes" className="border-y border-slate-200 bg-white px-4 py-16 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-5xl">
+          <h2 className="text-3xl font-semibold tracking-normal">
+            Recognition modes
+          </h2>
+          <p className="mt-4 max-w-3xl leading-7 text-slate-600">
+            The wizard fixes the input contract, available terminals, engine
+            call, and result report before a search starts. The selected
+            calculator buttons define the constants, unary functions, and
+            binary operators in every mode.
+          </p>
+          <div className="mt-8 overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full min-w-[760px] border-collapse bg-white text-left text-sm">
+              <thead className="bg-stone-100 text-slate-700">
+                <tr>
+                  {['Mode', 'Input', 'Terminals', 'Execution', 'Report'].map(label => (
+                    <th key={label} className="border-b border-slate-200 px-4 py-3 font-semibold">{label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="text-slate-600">
+                <tr className="border-b border-slate-100">
+                  <td className="px-4 py-3 font-semibold text-slate-950">One constant</td>
+                  <td className="px-4 py-3 font-mono">z and global dz</td>
+                  <td className="px-4 py-3">selected constants; x disabled</td>
+                  <td className="px-4 py-3">one CPU/WASM or GPU search</td>
+                  <td className="px-4 py-3">ranked candidates</td>
+                </tr>
+                <tr className="border-b border-slate-100">
+                  <td className="px-4 py-3 font-semibold text-slate-950">Multiple constants</td>
+                  <td className="px-4 py-3 font-mono">one z[,dz] per row</td>
+                  <td className="px-4 py-3">selected constants; x disabled</td>
+                  <td className="px-4 py-3">shared CPU batch or verified GPU searches</td>
+                  <td className="px-4 py-3">one best result per target_id</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 font-semibold text-slate-950">Function f(x)</td>
+                  <td className="px-4 py-3 font-mono">one x,y[,dy] per row</td>
+                  <td className="px-4 py-3">x enabled; constants optional</td>
+                  <td className="px-4 py-3">one CPU/WASM or GPU fit search</td>
+                  <td className="px-4 py-3">formula and weighted MSE</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="batch" className="px-4 py-16 sm:px-6 lg:px-8">
+        <div className="mx-auto grid max-w-5xl gap-10 lg:grid-cols-[1fr_1fr]">
+          <div>
+            <h2 className="text-3xl font-semibold tracking-normal">
+              Multiple-constant recognition
+            </h2>
+            <p className="mt-4 leading-7 text-slate-600">
+              Enter at least two rows as <span className="font-mono">z</span>
+              or <span className="font-mono">z, dz</span>. CPU/WASM enumerates
+              each expression once and compares its value with every unfinished
+              target. The report preserves the input-row identity and retains
+              a separately verified best expression for every target.
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-5">
+            <h3 className="font-semibold text-slate-950">CPU and GPU contract</h3>
+            <ul className="mt-3 space-y-2 leading-7 text-slate-600">
+              <li>CPU mode uses the native MODE_BATCH implementation.</li>
+              <li>GPU mode processes targets separately with the same selected calculator.</li>
+              <li>Every GPU candidate is recomputed in CPU double precision before reporting.</li>
+              <li>The UI distinguishes accepted matches, best approximations, and missing results.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="functions" className="border-y border-slate-200 bg-white px-4 py-16 sm:px-6 lg:px-8">
         <div className="mx-auto grid max-w-5xl gap-10 lg:grid-cols-[1fr_1fr]">
           <div>
             <h2 className="text-3xl font-semibold tracking-normal">
@@ -182,7 +258,7 @@ export default function DocsPage() {
               recomputed on the CPU before they are reported.
             </p>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-5">
+          <div className="rounded-lg border border-slate-200 bg-stone-50 p-5">
             <h3 className="font-semibold text-slate-950">Acceptance contract</h3>
             <ul className="mt-3 space-y-2 leading-7 text-slate-600">
               <li>At least two finite data points are required.</li>
@@ -287,6 +363,7 @@ export default function DocsPage() {
               <li>Maximum K and selected calculator/domain.</li>
               <li>Candidate expression and independent verification method.</li>
               <li>For f(x): all x,y[,dy] rows and the weighted MSE.</li>
+              <li>For a batch: all z[,dz] rows and each target_id result.</li>
             </ul>
           </div>
         </div>

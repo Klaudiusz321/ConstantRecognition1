@@ -1,72 +1,39 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import {
+  parseFunctionDataset,
+  parseMultipleConstantsDataset,
+} from '../app/calculator/lib/search-contract';
 
-// We extract the parsing logic that is used in worker.js and page.tsx 
-// into an easily testable format.
-function parseFunctionInput(inputValue) {
-    const pairs = inputValue.split(/[\n;]/).map(p => p.trim()).filter(p => p);
-    const x_arr = [];
-    const y_arr = [];
-    pairs.forEach(p => {
-        const parts = p.split(/[:,]/);
-        if (parts.length >= 2) {
-            x_arr.push(parseFloat(parts[0]));
-            y_arr.push(parseFloat(parts[1]));
-        }
-    });
-    return { x_arr, y_arr };
-}
-
-function parseMultipleConstants(inputValue) {
-    return inputValue.split(/[,;\n]/).map(v => parseFloat(v.trim())).filter(v => !isNaN(v));
-}
-
-describe('Frontend Input Parsing Logic', () => {
-  
-  describe('parseFunctionInput (MODE_FUNCTION)', () => {
-    it('should parse semi-colon separated pairs', () => {
-      const input = "1:1; 2:4; 3:9";
-      const { x_arr, y_arr } = parseFunctionInput(input);
-      expect(x_arr).toEqual([1, 2, 3]);
-      expect(y_arr).toEqual([1, 4, 9]);
+describe('scientific input contracts', () => {
+  describe('function recognition', () => {
+    it('parses x, y and optional dy from one observation per line', () => {
+      expect(parseFunctionDataset('1, 1\n2 4 0.1\n3;9').points).toEqual([
+        { x: 1, y: 1, dy: 0 },
+        { x: 2, y: 4, dy: 0.1 },
+        { x: 3, y: 9, dy: 0 },
+      ]);
     });
 
-    it('should parse newline separated comma pairs', () => {
-      const input = `
-        1,1
-        2,4
-        3,9
-      `;
-      const { x_arr, y_arr } = parseFunctionInput(input);
-      expect(x_arr).toEqual([1, 2, 3]);
-      expect(y_arr).toEqual([1, 4, 9]);
-    });
-
-    it('should ignore invalid pairs', () => {
-      const input = "1:1; invalid; 3:9";
-      const { x_arr, y_arr } = parseFunctionInput(input);
-      expect(x_arr).toEqual([1, 3]);
-      expect(y_arr).toEqual([1, 9]);
+    it('rejects malformed rows instead of silently dropping scientific data', () => {
+      expect(parseFunctionDataset('1,1\ninvalid\n3,9').error).toMatch(/line 2/i);
+      expect(parseFunctionDataset('1,1\n2,4,-0.1').error).toMatch(/non-negative/i);
     });
   });
 
-  describe('parseMultipleConstants (MODE_BATCH)', () => {
-    it('should parse comma-separated constants', () => {
-      const input = "3.14159, 2.71828, 1.61803";
-      const vals = parseMultipleConstants(input);
-      expect(vals).toEqual([3.14159, 2.71828, 1.61803]);
+  describe('multiple-constant recognition', () => {
+    it('assigns stable row IDs and parses optional absolute uncertainty', () => {
+      expect(parseMultipleConstantsDataset('3.14159\n2.71828, 1e-8\n1.61803').targets).toEqual([
+        { id: 1, value: 3.14159, dy: 0 },
+        { id: 2, value: 2.71828, dy: 1e-8 },
+        { id: 3, value: 1.61803, dy: 0 },
+      ]);
     });
 
-    it('should parse newline and semicolon-separated constants', () => {
-      const input = "3.14159; \n 2.71828; \n 1.61803";
-      const vals = parseMultipleConstants(input);
-      expect(vals).toEqual([3.14159, 2.71828, 1.61803]);
-    });
-
-    it('should ignore NaN values', () => {
-      const input = "3.14159, abc, 2.71828";
-      const vals = parseMultipleConstants(input);
-      expect(vals).toEqual([3.14159, 2.71828]);
+    it('accepts comments but requires at least two finite targets', () => {
+      expect(parseMultipleConstantsDataset('# reference set\n3.14159\n2.71828').error).toBeNull();
+      expect(parseMultipleConstantsDataset('3.14159').error).toMatch(/at least two/i);
+      expect(parseMultipleConstantsDataset('3.14159\nnot-a-number').error).toMatch(/line 2/i);
+      expect(parseMultipleConstantsDataset('3.14159\n2.71828, -1').error).toMatch(/non-negative/i);
     });
   });
-
 });

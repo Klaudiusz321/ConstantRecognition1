@@ -55,9 +55,13 @@ Create genuinely new problems with elegant solutions. Example: `11/13 = tanh(ln(
 ## Current Status
 
 ### Implemented
-- Input box with target constant and optional error specification
+- Three-mode recognition wizard: one constant, multiple independent constants, or a univariate function
+- Mode-specific validated inputs: `z`, `z[,dz]`, and `x,y[,dy]`
 - Parallel CPU search via Web Workers + WASM
 - GPU search via WebGPU compute shaders
+- Manual Auto/GPU/CPU selection with CPU verification of GPU candidates
+- Native CPU/WASM batch search with one result report per target
+- Univariate function search with weighted-MSE reporting
 - Sortable results table with filters
 - Compression ratio, relative error, and probability as identification criteria
 - Relative error and progress tracking
@@ -93,8 +97,7 @@ Create genuinely new problems with elegant solutions. Example: `11/13 = tanh(ln(
 | Feature | Description | Complexity | Frontend Visibility | Backend availability
 |---------|-------------|------------|---------------------|---------------------
 | Integer Target Mode | Dedicated search using Prime, Fibonacci, Binomial, etc. | Medium | Advanced options or autoselect if target is an integer | No
-| Multi-Constant Search | Find formulas involving multiple target constants (any/all) | High | File open dialog | No
-| Univariate Function Search | Identify functions, not just constants | Very High | File open dialog | Yes
+| Multi-Target Formula Search | Build one formula that combines several supplied target constants (distinct from the implemented independent-target batch mode) | High | File open dialog | No
 | Integer Sequence Search | Identify sequences using GPU integer arithmetic| High | Advanced options, File open dialog or autoselect if integer sequence is pasted/typed | No
 | Calculator Completeness Checker | Verify a calculator can express all "expected" results | Medium | Part of calculator creator | No, only Wolfram code
 | Cross-Calculator Complexity Comparison | Compare expression complexity across different instruction sets using e.g. EmL compiler | Low | Intermediate results table | No
@@ -186,5 +189,3 @@ Understanding existing tools helps position our project:
 | **Motzkin number** | Count of valid RPN ternary structures for length K |
 | **CALC4** | Our standard 36-button calculator (13 const + 18 unary + 5 binary) |
 | **EmL** | Theoretical minimal calculator with single operation |
-
-

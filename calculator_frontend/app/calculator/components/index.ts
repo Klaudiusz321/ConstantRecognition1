@@ -5,3 +5,5 @@ export { ResultsTable } from './ResultsTable';
 export { EmptyState } from './EmptyState';
 export { SearchProgress } from './SearchProgress';
 export { Latex } from './Latex';
+export { RecognitionWizard } from './RecognitionWizard';
+export { BatchSummary } from './BatchSummary';
