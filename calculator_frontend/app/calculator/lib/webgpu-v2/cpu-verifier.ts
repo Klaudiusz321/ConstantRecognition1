@@ -87,12 +87,21 @@ function applyBinaryCoreOrder(token: string, top: number, below: number): number
   }
 }
 
-export function evaluateCoreRPN(tokens: readonly CalculatorToken[], xValue = 0): number {
+export type VariableValues = number | Readonly<{
+  x?: number;
+  C1?: number;
+  C2?: number;
+}>;
+
+export function evaluateCoreRPN(tokens: readonly CalculatorToken[], variables: VariableValues = 0): number {
   const stack: number[] = [];
+  const variableValues = typeof variables === 'number'
+    ? { x: variables, C1: 0, C2: 0 }
+    : { x: variables.x ?? 0, C1: variables.C1 ?? 0, C2: variables.C2 ?? 0 };
 
   for (const token of tokens) {
-    if (token === 'x') {
-      stack.push(xValue);
+    if (token === 'x' || token === 'C1' || token === 'C2') {
+      stack.push(variableValues[token]);
       continue;
     }
     const constant = CONSTANTS[token];

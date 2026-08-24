@@ -4,8 +4,8 @@ import {
   FULL_CALC4,
   type CompiledCalculator,
 } from './calculator';
-import { functionMeanSquaredError } from '../search-contract';
-import type { FunctionPoint } from '../types';
+import { functionMeanSquaredError, multivariateMeanSquaredError } from '../search-contract';
+import type { FunctionPoint, MultivariatePoint } from '../types';
 import { absoluteError, evaluateCoreRPN, relativeError } from './cpu-verifier';
 import { countValidForms, iterateValidForms } from './forms';
 import { getCompressionRatio, isAcceptedCandidate } from './metrics';
@@ -70,6 +70,7 @@ interface TileContext {
   readonly screeningRelativeError: number;
   readonly calculator: CompiledCalculator;
   readonly functionPoints: readonly FunctionPoint[] | null;
+  readonly multivariatePoints: readonly MultivariatePoint[] | null;
   readonly candidateCapacity: number;
   readonly groupBestToVerify: number;
   readonly signal?: AbortSignal;
@@ -485,6 +486,10 @@ export class WebGPUConstantRecognizer {
     }
 
     const functionPoints = request.functionPoints ? [...request.functionPoints] : null;
+    const multivariatePoints = request.multivariatePoints ? [...request.multivariatePoints] : null;
+    if (functionPoints && multivariatePoints) {
+      throw new RangeError('Choose either one-variable or two-variable function data, not both.');
+    }
     if (functionPoints) {
       if (functionPoints.length < 2) {
         throw new RangeError('Function recognition requires at least two data points.');
@@ -500,10 +505,26 @@ export class WebGPUConstantRecognizer {
       }
     }
 
-    const calculator = compileCalculator(functionPoints ? {
-      ...(request.calculator ?? FULL_CALC4),
-      variables: ['x'],
-    } : request.calculator);
+    if (multivariatePoints) {
+      if (multivariatePoints.length < 3) {
+        throw new RangeError('Two-variable recognition requires at least three data points.');
+      }
+      for (const point of multivariatePoints) {
+        if (![point.c1, point.c2, point.y, point.dy].every(Number.isFinite) || point.dy < 0) {
+          throw new RangeError('Two-variable data must be finite and dy must be non-negative.');
+        }
+        const pointF32 = [point.c1, point.c2, point.y, point.dy].map(Math.fround);
+        if (!pointF32.every(Number.isFinite)) {
+          throw new RangeError('Two-variable data must be representable in FP32 for GPU screening.');
+        }
+      }
+    }
+
+    const calculator = compileCalculator(functionPoints
+      ? { ...(request.calculator ?? FULL_CALC4), variables: ['x'] }
+      : multivariatePoints
+        ? { ...(request.calculator ?? FULL_CALC4), variables: ['C1', 'C2'] }
+        : request.calculator);
     const instructionCount =
       calculator.constCodes.length + calculator.variableNames.length +
       calculator.unaryCodes.length + calculator.binaryCodes.length;
@@ -552,7 +573,9 @@ export class WebGPUConstantRecognizer {
       throw new RangeError('Target cannot be represented as a finite non-zero FP32 value.');
     }
 
-    const targetQuantization = functionPoints ? 0 : relativeError(targetF32, request.target);
+    const targetQuantization = functionPoints || multivariatePoints
+      ? 0
+      : relativeError(targetF32, request.target);
     const screeningRelativeError = Math.fround(Math.max(
       request.screeningRelativeError ?? DEFAULT_SCREENING_REL_ERROR,
       64 * F32_EPSILON,
@@ -619,7 +642,15 @@ export class WebGPUConstantRecognizer {
         let absError: number;
         let relError: number;
         try {
-          if (functionPoints) {
+          if (multivariatePoints) {
+            const values = multivariatePoints.map(point => evaluateCoreRPN(tokens, {
+              C1: point.c1,
+              C2: point.c2,
+            }));
+            value = values[0];
+            relError = multivariateMeanSquaredError(values, multivariatePoints);
+            absError = relError;
+          } else if (functionPoints) {
             const values = functionPoints.map(point => evaluateCoreRPN(tokens, point.x));
             value = values[0];
             relError = functionMeanSquaredError(values, functionPoints);
@@ -636,7 +667,7 @@ export class WebGPUConstantRecognizer {
 
         verifiedCandidates++;
         const cr = getCompressionRatio(relError, form.K, instructionCount);
-        const accepted = functionPoints
+        const accepted = functionPoints || multivariatePoints
           ? relError <= functionErrorTolerance
           : isAcceptedCandidate({
               relativeError: relError,
@@ -670,6 +701,7 @@ export class WebGPUConstantRecognizer {
       screeningRelativeError,
       calculator,
       functionPoints,
+      multivariatePoints,
       candidateCapacity,
       groupBestToVerify,
       signal: request.signal,
@@ -831,7 +863,10 @@ export class WebGPUConstantRecognizer {
       throw new RangeError('Tile exceeds maxComputeWorkgroupsPerDimension.');
     }
 
-    const dataCapacity = Math.max(context.functionPoints?.length ?? 1, 1);
+    const dataCapacity = Math.max(
+      context.functionPoints?.length ?? context.multivariatePoints?.length ?? 1,
+      1,
+    );
     const resources = this.ensureResources(context.candidateCapacity, workgroupCount, dataCapacity);
     const formWords = this.packFormData(form, context.calculator, tileStart);
     const params = this.packParams(
@@ -843,6 +878,7 @@ export class WebGPUConstantRecognizer {
       workgroupCount,
       context.calculator,
       context.functionPoints,
+      context.multivariatePoints,
     );
 
     this.device.queue.writeBuffer(resources.params, 0, params);
@@ -851,7 +887,11 @@ export class WebGPUConstantRecognizer {
     this.device.queue.writeBuffer(
       resources.dataPoints,
       0,
-      this.packFunctionData(context.functionPoints, context.targetF32),
+      this.packFunctionData(
+        context.functionPoints,
+        context.multivariatePoints,
+        context.targetF32,
+      ),
     );
 
     const encoder = this.device.createCommandEncoder({ label: 'Constant Recognition tile' });
@@ -979,6 +1019,7 @@ export class WebGPUConstantRecognizer {
     workgroupCount: number,
     calculator: CompiledCalculator,
     functionPoints: readonly FunctionPoint[] | null,
+    multivariatePoints: readonly MultivariatePoint[] | null,
   ): ArrayBuffer {
     const buffer = new ArrayBuffer(PARAM_BYTES);
     const floatView = new Float32Array(buffer, 0, 4);
@@ -997,21 +1038,33 @@ export class WebGPUConstantRecognizer {
     ]);
 
     const searchView = new Uint32Array(buffer, 48, 4);
-    searchView.set([functionPoints ? 1 : 0, functionPoints?.length ?? 1, 0, 0]);
+    const mode = functionPoints ? 1 : multivariatePoints ? 2 : 0;
+    const pointCount = functionPoints?.length ?? multivariatePoints?.length ?? 1;
+    searchView.set([mode, pointCount, 0, 0]);
     return buffer;
   }
 
   private packFunctionData(
     functionPoints: readonly FunctionPoint[] | null,
+    multivariatePoints: readonly MultivariatePoint[] | null,
     targetF32: number,
   ): Float32Array<ArrayBuffer> {
-    const points = functionPoints ?? [{ x: 0, y: targetF32, dy: 0 }];
-    const packed = new Float32Array(points.length * 4);
-    for (let index = 0; index < points.length; index++) {
+    const count = functionPoints?.length ?? multivariatePoints?.length ?? 1;
+    const packed = new Float32Array(count * 4);
+    for (let index = 0; index < count; index++) {
       const offset = index * 4;
-      packed[offset] = Math.fround(points[index].x);
-      packed[offset + 1] = Math.fround(points[index].y);
-      packed[offset + 2] = Math.fround(points[index].dy);
+      if (multivariatePoints) {
+        packed[offset] = Math.fround(multivariatePoints[index].c1);
+        packed[offset + 1] = Math.fround(multivariatePoints[index].c2);
+        packed[offset + 2] = Math.fround(multivariatePoints[index].y);
+        packed[offset + 3] = Math.fround(multivariatePoints[index].dy);
+      } else if (functionPoints) {
+        packed[offset] = Math.fround(functionPoints[index].x);
+        packed[offset + 2] = Math.fround(functionPoints[index].y);
+        packed[offset + 3] = Math.fround(functionPoints[index].dy);
+      } else {
+        packed[offset + 2] = targetF32;
+      }
     }
     return packed;
   }

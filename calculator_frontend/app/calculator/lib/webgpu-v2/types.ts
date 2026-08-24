@@ -1,5 +1,5 @@
 import type { CalculatorSelection, CalculatorToken, CompiledCalculator } from './calculator';
-import type { FunctionPoint } from '../types';
+import type { FunctionPoint, MultivariatePoint } from '../types';
 
 export const MAX_GPU_K = 16;
 export const MAX_OPS_PER_KIND = 32;
@@ -91,6 +91,8 @@ export interface GPUSearchRequest {
   readonly calculator?: CalculatorSelection;
   /** When present, recognize one expression containing x against these points. */
   readonly functionPoints?: readonly FunctionPoint[];
+  /** When present, recognize one expression containing both C1 and C2. */
+  readonly multivariatePoints?: readonly MultivariatePoint[];
   /** Accepted weighted MSE for function recognition. */
   readonly functionErrorTolerance?: number;
 

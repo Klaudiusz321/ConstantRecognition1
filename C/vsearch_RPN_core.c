@@ -8,6 +8,7 @@
  *   - MODE_CONSTANT: n_data=1, no variable x, num_to_find=1
  *   - MODE_FUNCTION: variable x in formulas, one formula fits all data points
  *   - MODE_BATCH: multiple targets, one formula per target, stop after num_to_find
+ *   - MODE_MULTIVARIATE: variables C1 and C2, one formula fits all data points
  *
  * MODE_CONSTANT is internally treated as MODE_BATCH with n_data=1.
  *
@@ -131,7 +132,19 @@ static int ternary_increment(char* ternary, int K) {
  *
  * MODE_CONSTANT/MODE_BATCH: indices[i] ∈ [0, n_const-1] → constants only
  * MODE_FUNCTION: indices[i] ∈ [0, n_const] → 0=x, 1..n_const=constants
+ * MODE_MULTIVARIATE: indices[i] ∈ [0, n_const+1] → 0=C1, 1=C2,
+ *                    2..n_const+1=constants
  * ============================================================================ */
+
+static int variable_count(SearchMode mode) {
+    if (mode == MODE_FUNCTION) return 1;
+    if (mode == MODE_MULTIVARIATE) return 2;
+    return 0;
+}
+
+static int is_function_mode(SearchMode mode) {
+    return mode == MODE_FUNCTION || mode == MODE_MULTIVARIATE;
+}
 
 static double evaluate_expression(
     const char* ternary, const int* indices, int K,
@@ -139,20 +152,22 @@ static double evaluate_expression(
     const UnaryOp* unary_ops,
     const BinaryOp* binary_ops,
     SearchMode mode,
-    double x_value)   /* Only used in MODE_FUNCTION */
+    const DataPoint* point)   /* Only used in function-like modes */
 {
     double stack[MAX_STACK_DEPTH];
     int sp = 0;
+    int n_variables = variable_count(mode);
     
     for (int i = 0; i < K; i++) {
         switch (ternary[i]) {
             case 0:  /* Constant (or variable in function mode) */
                 if (sp >= MAX_STACK_DEPTH) return nan("");
-                if (mode == MODE_FUNCTION && indices[i] == 0) {
-                    stack[sp++] = x_value;  /* Index 0 = variable x */
+                if (indices[i] < n_variables) {
+                    if (!point) return nan("");
+                    stack[sp++] = (indices[i] == 0) ? point->x : point->x2;
                 } else {
-                    /* In function mode, constant indices are shifted by 1 */
-                    int idx = (mode == MODE_FUNCTION) ? indices[i] - 1 : indices[i];
+                    int idx = indices[i] - n_variables;
+                    if (idx < 0 || idx >= n_const) return nan("");
                     stack[sp++] = const_ops[idx].value;
                 }
                 break;
@@ -190,6 +205,7 @@ static void format_code(
     char* out, int out_size)
 {
     int pos = 0;
+    int n_variables = variable_count(mode);
     
     for (int i = 0; i < K && pos < out_size - 20; i++) {
         if (i > 0) {
@@ -200,10 +216,11 @@ static void format_code(
         const char* name = NULL;
         switch (ternary[i]) {
             case 0:
-                if (mode == MODE_FUNCTION && indices[i] == 0) {
-                    name = "x";
+                if (indices[i] < n_variables) {
+                    if (mode == MODE_FUNCTION) name = "x";
+                    else name = (indices[i] == 0) ? "C1" : "C2";
                 } else {
-                    int idx = (mode == MODE_FUNCTION) ? indices[i] - 1 : indices[i];
+                    int idx = indices[i] - n_variables;
                     name = const_ops[idx].name;
                 }
                 break;
@@ -250,25 +267,32 @@ static int is_exact_match(double err, double computed, double target, double del
     return 0;
 }
 
-/* Check if expression contains variable x (MODE_FUNCTION only) */
-static int contains_variable(const char* ternary, const int* indices, int K) {
+/* Function-like modes require every declared variable. This prevents a
+   coincidental C1-only or C2-only fit from being reported as multivariate. */
+static int contains_all_variables(
+    const char* ternary, const int* indices, int K, int n_variables)
+{
+    int found[2] = {0, 0};
     for (int i = 0; i < K; i++) {
-        if (ternary[i] == 0 && indices[i] == 0) return 1;
+        if (ternary[i] == 0 && indices[i] < n_variables) found[indices[i]] = 1;
     }
-    return 0;
+    for (int i = 0; i < n_variables; i++) if (!found[i]) return 0;
+    return 1;
 }
 
-/* Compute MSE/MAE for MODE_FUNCTION (one formula, multiple data points) */
+/* Compute MSE/MAE for one formula evaluated across all supplied rows. */
 static double compute_function_error(
     const char* ternary, const int* indices, int K,
     const ConstOp* const_ops, int n_const,
     const UnaryOp* unary_ops, const BinaryOp* binary_ops,
-    const DataPoint* data, int n_data, ErrorMetric metric)
+    const DataPoint* data, int n_data, ErrorMetric metric, SearchMode mode)
 {
     double error = 0.0, max_err = 0.0;
     int valid = 0;
     for (int i = 0; i < n_data; i++) {
-        double computed = evaluate_expression(ternary, indices, K, const_ops, n_const, unary_ops, binary_ops, MODE_FUNCTION, data[i].x);
+        double computed = evaluate_expression(
+            ternary, indices, K, const_ops, n_const, unary_ops, binary_ops,
+            mode, &data[i]);
         if (isnan(computed) || isinf(computed)) { error += 1e10; valid++; continue; }
         double diff = computed - data[i].y;
         /* dy is an optional scientific uncertainty. When supplied, evaluate
@@ -348,19 +372,24 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
     if (pos == K) {
         st->evaluations++;
         
-        if (st->mode == MODE_FUNCTION) {
-            /* MODE_FUNCTION: one formula fits all data points */
-            if (!contains_variable(ternary, indices, K)) return 0;
-            double err = compute_function_error(ternary, indices, K, st->const_ops, st->n_const, st->unary_ops, st->binary_ops, st->data, st->n_data, st->metric);
+        if (is_function_mode(st->mode)) {
+            /* One formula containing every declared variable fits all rows. */
+            if (!contains_all_variables(ternary, indices, K, variable_count(st->mode))) return 0;
+            double err = compute_function_error(
+                ternary, indices, K, st->const_ops, st->n_const,
+                st->unary_ops, st->binary_ops, st->data, st->n_data,
+                st->metric, st->mode);
             int is_better = (st->compare == COMPARE_STRICT) ? (err < st->func_best_err) : (err <= st->func_best_err);
             if (is_better) {
                 st->func_best_err = err;
                 st->func_best_K = K;
-                st->func_best_value = evaluate_expression(ternary, indices, K, st->const_ops, st->n_const, st->unary_ops, st->binary_ops, MODE_FUNCTION, st->data[0].x);
+                st->func_best_value = evaluate_expression(
+                    ternary, indices, K, st->const_ops, st->n_const,
+                    st->unary_ops, st->binary_ops, st->mode, &st->data[0]);
                 memcpy(st->func_best_ternary, ternary, K);
                 memcpy(st->func_best_indices, indices, K * sizeof(int));
                 char code[512];
-                format_code(ternary, indices, K, st->const_ops, st->unary_ops, st->binary_ops, MODE_FUNCTION, code, sizeof(code));
+                format_code(ternary, indices, K, st->const_ops, st->unary_ops, st->binary_ops, st->mode, code, sizeof(code));
                 
                 if (st->result_count > 0) {
                     int w = snprintf(st->json_ptr, st->json_remaining, ",\n");
@@ -390,7 +419,7 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
         }
         
         /* MODE_CONSTANT or MODE_BATCH: evaluate once, check against each unfound target */
-        double computed = evaluate_expression(ternary, indices, K, st->const_ops, st->n_const, st->unary_ops, st->binary_ops, MODE_CONSTANT, 0.0);
+        double computed = evaluate_expression(ternary, indices, K, st->const_ops, st->n_const, st->unary_ops, st->binary_ops, MODE_CONSTANT, NULL);
         if (isnan(computed) || isinf(computed)) return 0;
         
         for (int t = 0; t < st->n_data; t++) {
@@ -476,7 +505,7 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
     /* Recursion: determine options for this position */
     int n_options;
     switch (ternary[pos]) {
-        case 0: n_options = (st->mode == MODE_FUNCTION) ? st->n_const + 1 : st->n_const; break;
+        case 0: n_options = st->n_const + variable_count(st->mode); break;
         case 1: n_options = st->n_unary; break;
         case 2: n_options = st->n_binary; break;
         default: return 0;
@@ -510,15 +539,16 @@ char* vsearch_core(
     
     /* For MODE_CONSTANT/MODE_BATCH: allocate per-target state */
     TargetState* targets = NULL;
-    if (mode != MODE_FUNCTION) {
+    if (!is_function_mode(mode)) {
         targets = (TargetState*)calloc(n_data, sizeof(TargetState));
         if (!targets) { free(json_output); return strdup("{\"error\":\"Memory allocation failed\"}"); }
         for (int i = 0; i < n_data; i++) { targets[i].best_err = DBL_MAX; targets[i].best_K = 1; }
     }
     
-    int n_total = n_const + n_unary + n_binary;
+    /* Cost alphabet includes variable terminals as distinct instructions. */
+    int n_total = n_const + n_unary + n_binary + variable_count(mode);
     int effective_num = (num_to_find <= 0) ? n_data : num_to_find;
-    if (mode == MODE_FUNCTION) effective_num = 1;
+    if (is_function_mode(mode)) effective_num = 1;
     
     SearchState st = {0};
     st.mode = mode;
@@ -536,7 +566,9 @@ char* vsearch_core(
     st.cpu_id = cpu_id;
     
     /* JSON header */
-    const char* mode_str = (mode == MODE_FUNCTION) ? "FUNCTION" : (n_data == 1 ? "CONSTANT" : "BATCH");
+    const char* mode_str = (mode == MODE_FUNCTION) ? "FUNCTION"
+        : (mode == MODE_MULTIVARIATE) ? "MULTIVARIATE"
+        : (n_data == 1 ? "CONSTANT" : "BATCH");
     const char* metric_str[] = {"ABS", "REL", "MSE", "MAE", "MAX", "ULP", "HAMMING"};
     const char* compare_str = (compare == COMPARE_STRICT) ? "STRICT" : "EQUAL";
     
@@ -591,7 +623,7 @@ char* vsearch_core(
         }
         
         /* Emit K_BEST after each level (for CONSTANT/BATCH mode) */
-        if (!st.stop_search && mode != MODE_FUNCTION) {
+        if (!st.stop_search && !is_function_mode(mode)) {
             for (int i = 0; i < n_data; i++) {
                 if (targets[i].found) continue;
                 if (targets[i].best_K > 0) {
@@ -631,9 +663,9 @@ char* vsearch_core(
     }
     
     /* Finalize JSON */
-    if (mode == MODE_FUNCTION) {
+    if (is_function_mode(mode)) {
         char code[512];
-        format_code(st.func_best_ternary, st.func_best_indices, st.func_best_K, const_ops, unary_ops, binary_ops, MODE_FUNCTION, code, sizeof(code));
+        format_code(st.func_best_ternary, st.func_best_indices, st.func_best_K, const_ops, unary_ops, binary_ops, mode, code, sizeof(code));
         const char* result_type = (st.func_best_err <= 1e-12) ? "SUCCESS" : "FAILURE";
         w = snprintf(st.json_ptr, st.json_remaining,
             "],\n \"result\":\"%s\", \"RPN\":\"%s\", \"REL_ERR\":%.17e, "
@@ -772,6 +804,21 @@ char* search_function(
     CompareMode compare)
 {
     return vsearch_core(MODE_FUNCTION, data, n_data, MinK, MaxK, cpu_id, ncpus,
+                       const_ops, n_const, unary_ops, n_unary, binary_ops, n_binary,
+                       metric, compare, 1, DEFAULT_CR_THRESHOLD);
+}
+
+char* search_multivariate(
+    const DataPoint* data, int n_data,
+    int MinK, int MaxK,
+    int cpu_id, int ncpus,
+    const ConstOp* const_ops, int n_const,
+    const UnaryOp* unary_ops, int n_unary,
+    const BinaryOp* binary_ops, int n_binary,
+    ErrorMetric metric,
+    CompareMode compare)
+{
+    return vsearch_core(MODE_MULTIVARIATE, data, n_data, MinK, MaxK, cpu_id, ncpus,
                        const_ops, n_const, unary_ops, n_unary, binary_ops, n_binary,
                        metric, compare, 1, DEFAULT_CR_THRESHOLD);
 }

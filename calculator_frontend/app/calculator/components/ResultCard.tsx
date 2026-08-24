@@ -13,6 +13,7 @@ interface ResultCardProps {
   errorLabel?: string;
   valueLabel?: string;
   functionMode?: boolean;
+  variableLabel?: string;
   functionErrorTolerance?: number;
 }
 
@@ -53,6 +54,7 @@ export function ResultCard({
   errorLabel = 'Relative Error',
   valueLabel = 'Numeric Value',
   functionMode = false,
+  variableLabel = 'contains x',
   functionErrorTolerance = 1e-12,
 }: ResultCardProps) {
   const cr = getCompressionRatio(result, instructionCount);
@@ -186,7 +188,7 @@ export function ResultCard({
                 <span className={`text-xs font-mono ${
                   (functionMode || probPassed) ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-500 dark:text-gray-400'
                 }`}>
-                  {functionMode ? 'contains x' : `P=${probability.toExponential(0)}`}
+                  {functionMode ? variableLabel : `P=${probability.toExponential(0)}`}
                 </span>
               </div>
             </div>

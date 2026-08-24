@@ -7,6 +7,7 @@
  * Core types and function declarations for:
  *   - Constant recognition (no variable, single target)
  *   - Function recognition (variable x, tabulated data)
+ *   - Multivariate recognition (variables C1 and C2, tabulated data)
  *   - Batch recognition (multiple targets, one formula per target)
  *
  * The key insight: constant recognition is a special case of batch
@@ -57,12 +58,18 @@ typedef struct {
  *   - x is the independent variable
  *   - y is the target value f(x)
  *   - dy is the uncertainty at this point (0 means unspecified)
+ *
+ * For multivariate recognition:
+ *   - x and x2 are the independent variables C1 and C2
+ *   - y is the target value F(C1,C2)
+ *   - dy is the uncertainty at this point (0 means unspecified)
  * ============================================================================ */
 
 typedef struct {
     double x;    /* Independent variable (ignored for constants) */
     double y;    /* Target value */
     double dy;   /* Uncertainty/error bar (0 = unspecified) */
+    double x2;   /* Second independent variable C2 (multivariate mode only) */
 } DataPoint;
 
 /* ============================================================================
@@ -116,7 +123,8 @@ typedef enum {
 typedef enum {
     MODE_CONSTANT,    /* No variable x, single target value */
     MODE_FUNCTION,    /* Variable x allowed in any/all constant slots */
-    MODE_BATCH        /* Multiple targets, stop after num_to_find hits */
+    MODE_BATCH,       /* Multiple targets, stop after num_to_find hits */
+    MODE_MULTIVARIATE /* Variables C1 and C2; one formula fits every row */
 } SearchMode;
 
 /* ============================================================================
@@ -186,6 +194,18 @@ char* search_constant_with_cr(
 
 /* Function recognition - direct call to core */
 char* search_function(
+    const DataPoint* data, int n_data,
+    int MinK, int MaxK,
+    int cpu_id, int ncpus,
+    const ConstOp* const_ops, int n_const,
+    const UnaryOp* unary_ops, int n_unary,
+    const BinaryOp* binary_ops, int n_binary,
+    ErrorMetric metric,
+    CompareMode compare);
+
+/* Two-variable function recognition. Every accepted expression must contain
+ * both C1 and C2, so a coincidental one-variable fit cannot be confirmed. */
+char* search_multivariate(
     const DataPoint* data, int n_data,
     int MinK, int MaxK,
     int cpu_id, int ncpus,

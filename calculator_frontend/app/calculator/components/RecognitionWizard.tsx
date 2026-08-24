@@ -38,6 +38,14 @@ const modes: ReadonlyArray<{
     input: 'Input: x, y[, dy] observations',
     result: 'Output: formula and weighted MSE',
   },
+  {
+    mode: 'multivariate',
+    step: '04',
+    title: 'Recognize F(C₁,C₂)',
+    description: 'Find one expression that uses both variables and fits every observation.',
+    input: 'Input: C₁, C₂, y[, dy] observations',
+    result: 'Output: verified formula and weighted MSE',
+  },
 ];
 
 export function RecognitionWizard({ onSelect }: RecognitionWizardProps) {
@@ -54,7 +62,7 @@ export function RecognitionWizard({ onSelect }: RecognitionWizardProps) {
           </p>
         </div>
 
-        <div className="mt-8 grid gap-4 lg:grid-cols-3">
+        <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {modes.map((option) => (
             <button
               key={option.mode}

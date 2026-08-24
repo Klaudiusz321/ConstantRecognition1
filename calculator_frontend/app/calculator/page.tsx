@@ -24,8 +24,10 @@ import { getCompressionRatio as computeCR } from './lib/cr';
 import {
   DEFAULT_FUNCTION_DATASET,
   DEFAULT_MULTIPLE_DATASET,
+  DEFAULT_MULTIVARIATE_DATASET,
   parseFunctionDataset,
   parseMultipleConstantsDataset,
+  parseMultivariateDataset,
 } from './lib/search-contract';
 import { WebGPUConstantRecognizer, type GPUProgress } from './lib/webgpu-v2';
 import {
@@ -47,6 +49,7 @@ import {
 } from './components';
 
 const ALL_TOKENS = [...CALC4_CONSTS, ...CALC4_FUNCS, ...CALC4_OPS];
+const MULTIVARIATE_STARTER_TOKENS = ['SQR', 'SQRT', 'PLUS'];
 
 // Ensures that all worker/WASM fetches include the configured base path (if any).
 // - Trailing slashes are removed so "//" never appears in URLs.
@@ -67,6 +70,7 @@ export default function CalculatorPage() {
   const [searchMode, setSearchMode] = useState<SearchMode | null>(null);
   const [functionDataset, setFunctionDataset] = useState(DEFAULT_FUNCTION_DATASET);
   const [multipleDataset, setMultipleDataset] = useState(DEFAULT_MULTIPLE_DATASET);
+  const [multivariateDataset, setMultivariateDataset] = useState(DEFAULT_MULTIVARIATE_DATASET);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [wasmLoaded, setWasmLoaded] = useState(false);
   const [gpuChecked, setGpuChecked] = useState(false);
@@ -146,8 +150,14 @@ export default function CalculatorPage() {
     () => parseMultipleConstantsDataset(multipleDataset),
     [multipleDataset],
   );
+  const parsedMultivariateDataset = useMemo(
+    () => parseMultivariateDataset(multivariateDataset),
+    [multivariateDataset],
+  );
   const canCalculate = searchMode === 'function'
     ? parsedFunctionDataset.error === null
+    : searchMode === 'multivariate'
+      ? parsedMultivariateDataset.error === null
     : searchMode === 'multiple'
       ? hasConstants && parsedMultipleDataset.error === null
       : searchMode === 'constant'
@@ -319,9 +329,14 @@ export default function CalculatorPage() {
     if (!searchMode || !canCalculate || (searchMode === 'constant' && !inputValue)) return;
 
     const functionPoints = searchMode === 'function' ? parsedFunctionDataset.points : undefined;
+    const multivariatePoints = searchMode === 'multivariate'
+      ? parsedMultivariateDataset.points
+      : undefined;
     const batchTargets = searchMode === 'multiple' ? parsedMultipleDataset.targets : undefined;
     const zNum = searchMode === 'function'
       ? functionPoints?.[0]?.y ?? 0
+      : searchMode === 'multivariate'
+        ? multivariatePoints?.[0]?.y ?? 0
       : searchMode === 'multiple'
         ? batchTargets?.[0]?.value ?? 0
         : parseFloat(inputValue);
@@ -382,6 +397,12 @@ export default function CalculatorPage() {
           deltaZ: 'MSE ≤ 1.00e-12',
           relDeltaZ: 'weighted residuals',
         }
+      : searchMode === 'multivariate'
+        ? {
+            z: `F(C₁,C₂), ${multivariatePoints?.length ?? 0} points`,
+            deltaZ: 'MSE ≤ 1.00e-12',
+            relDeltaZ: 'weighted residuals; both variables required',
+          }
       : searchMode === 'multiple'
         ? {
             z: `${batchTargets?.length ?? 0} numerical targets`,
@@ -393,7 +414,8 @@ export default function CalculatorPage() {
           deltaZ: deltaZNum === 0 ? '0' : deltaZNum.toExponential(2),
           relDeltaZ: relDeltaZ === 0 ? '0' : relDeltaZ.toExponential(2)
         });
-    const exactSearch = searchMode === 'function' || searchMode === 'multiple' || deltaZNum === 0;
+    const exactSearch = searchMode === 'function' || searchMode === 'multivariate' ||
+      searchMode === 'multiple' || deltaZNum === 0;
     setLastSearchExact(exactSearch);
     setSortColumn(exactSearch ? 'REL_ERR' : 'CR');
     setSortDirection(exactSearch ? 'asc' : 'desc');
@@ -413,7 +435,7 @@ export default function CalculatorPage() {
     };
     setLastSearchN(
       selection.consts.length + selection.funcs.length + selection.ops.length
-        + (searchMode === 'function' ? 1 : 0),
+        + (searchMode === 'function' ? 1 : searchMode === 'multivariate' ? 2 : 0),
     );
 
     const gpuWasRequested = computeEngine === 'gpu' || (
@@ -423,6 +445,10 @@ export default function CalculatorPage() {
       ? (functionPoints ?? []).flatMap(point => point.dy > 0
           ? [point.x, point.y, point.dy]
           : [point.x, point.y])
+      : searchMode === 'multivariate'
+        ? (multivariatePoints ?? []).flatMap(point => point.dy > 0
+            ? [point.c1, point.c2, point.y, point.dy]
+            : [point.c1, point.c2, point.y])
       : searchMode === 'multiple'
         ? (batchTargets ?? []).flatMap(target => target.dy > 0
             ? [target.value, target.dy]
@@ -546,6 +572,7 @@ export default function CalculatorPage() {
           absoluteTolerance: deltaZNum,
           compressionRatioThreshold: earlyExitCRThreshold,
           functionPoints,
+          multivariatePoints,
           functionErrorTolerance: 1e-12,
           ranking: exactSearch ? 'relative-error' : 'compression-ratio',
           maxEvaluations: BigInt(100_000_000),
@@ -570,7 +597,7 @@ export default function CalculatorPage() {
           cpuId: -1,
           K: result.K,
           RPN: result.rpn,
-          result: searchMode === 'function'
+          result: searchMode === 'function' || searchMode === 'multivariate'
             ? `MSE ${result.relativeError.toExponential(6)}`
             : String(result.value),
           REL_ERR: result.relativeError,
@@ -628,8 +655,8 @@ export default function CalculatorPage() {
     // distribution (heavy gamma-chain structures, E-cores, tab throttling)
     // self-balances instead of leaving one lagging worker at the end.
     const tasks = buildTaskQueue(searchDepth, selection, {
-      variableCount: searchMode === 'function' ? 1 : 0,
-      splitUnaryChain: searchMode !== 'function',
+      variableCount: searchMode === 'function' ? 1 : searchMode === 'multivariate' ? 2 : 0,
+      splitUnaryChain: searchMode !== 'function' && searchMode !== 'multivariate',
     });
     const totalTasks = tasks.length;
     let nextTaskIndex = 0;
@@ -702,6 +729,7 @@ export default function CalculatorPage() {
         opList: task.opList,
         searchMode,
         functionPoints,
+        multivariatePoints,
         batchTargets,
       });
     };
@@ -766,7 +794,7 @@ export default function CalculatorPage() {
         }
         if (!keepRow(r.K, r.REL_ERR, r.RPN)) return;
         let numericValue: string;
-        if (searchMode === 'function') {
+        if (searchMode === 'function' || searchMode === 'multivariate') {
           numericValue = `MSE ${r.REL_ERR.toExponential(6)}`;
         } else {
           try {
@@ -795,7 +823,7 @@ export default function CalculatorPage() {
         : data.result === 'SUCCESS';
       if (searchMode !== 'multiple' && data.result && data.RPN && (isSuccess || keepRow(data.K, data.REL_ERR, data.RPN))) {
         let numericValue: string;
-        if (searchMode === 'function') {
+        if (searchMode === 'function' || searchMode === 'multivariate') {
           numericValue = `MSE ${Number(data.REL_ERR).toExponential(6)}`;
         } else {
           try {
@@ -962,6 +990,8 @@ export default function CalculatorPage() {
     handleAbort();
     if (searchMode === 'function') {
       setFunctionDataset(DEFAULT_FUNCTION_DATASET);
+    } else if (searchMode === 'multivariate') {
+      setMultivariateDataset(DEFAULT_MULTIVARIATE_DATASET);
     } else if (searchMode === 'multiple') {
       setMultipleDataset(DEFAULT_MULTIPLE_DATASET);
     } else {
@@ -1002,6 +1032,18 @@ export default function CalculatorPage() {
   const handleModeSelect = (mode: SearchMode) => {
     if (isCalculating) return;
     clearModeOutput();
+    if (mode === 'multivariate') {
+      // The reference F(C1,C2) formula is only six tokens long, but it is
+      // buried behind hundreds of millions of combinations in full CALC4.
+      // Start with its explicit scientific grammar; "Enable all" remains
+      // available for broader searches.
+      setEnabledTokens(MULTIVARIATE_STARTER_TOKENS);
+    } else if (
+      enabledTokens.length === MULTIVARIATE_STARTER_TOKENS.length &&
+      MULTIVARIATE_STARTER_TOKENS.every(token => enabledTokens.includes(token))
+    ) {
+      setEnabledTokens(ALL_TOKENS);
+    }
     setSearchMode(mode);
   };
 
@@ -1063,6 +1105,9 @@ export default function CalculatorPage() {
             multipleDataset={multipleDataset}
             setMultipleDataset={setMultipleDataset}
             multipleDatasetError={parsedMultipleDataset.error}
+            multivariateDataset={multivariateDataset}
+            setMultivariateDataset={setMultivariateDataset}
+            multivariateDatasetError={parsedMultivariateDataset.error}
             onOpenWizard={handleOpenWizard}
             isCalculating={isCalculating}
             canCalculate={canCalculate}
@@ -1149,9 +1194,10 @@ export default function CalculatorPage() {
                 allResults={results}
                 crThreshold={earlyExitCRThreshold}
                 instructionCount={lastSearchN}
-                errorLabel={lastSearchMode === 'function' ? 'Weighted MSE' : 'Relative Error'}
-                valueLabel={lastSearchMode === 'function' ? 'Fit Metric' : 'Numeric Value'}
-                functionMode={lastSearchMode === 'function'}
+                errorLabel={lastSearchMode === 'function' || lastSearchMode === 'multivariate' ? 'Weighted MSE' : 'Relative Error'}
+                valueLabel={lastSearchMode === 'function' || lastSearchMode === 'multivariate' ? 'Fit Metric' : 'Numeric Value'}
+                functionMode={lastSearchMode === 'function' || lastSearchMode === 'multivariate'}
+                variableLabel={lastSearchMode === 'multivariate' ? 'contains C₁ and C₂' : 'contains x'}
                 functionErrorTolerance={1e-12}
               />
             ) : null}
@@ -1165,7 +1211,7 @@ export default function CalculatorPage() {
               sortDirection={sortDirection}
               setSortDirection={setSortDirection}
               instructionCount={lastSearchN}
-              errorLabel={lastSearchMode === 'function' ? 'MSE' : 'Rel. Error'}
+              errorLabel={lastSearchMode === 'function' || lastSearchMode === 'multivariate' ? 'MSE' : 'Rel. Error'}
               searchMode={lastSearchMode}
             />
           </div>

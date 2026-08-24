@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parseFunctionDataset,
   parseMultipleConstantsDataset,
+  parseMultivariateDataset,
 } from '../app/calculator/lib/search-contract';
 
 describe('scientific input contracts', () => {
@@ -17,6 +18,22 @@ describe('scientific input contracts', () => {
     it('rejects malformed rows instead of silently dropping scientific data', () => {
       expect(parseFunctionDataset('1,1\ninvalid\n3,9').error).toMatch(/line 2/i);
       expect(parseFunctionDataset('1,1\n2,4,-0.1').error).toMatch(/non-negative/i);
+    });
+  });
+
+  describe('two-variable function recognition', () => {
+    it('parses C1, C2, y and optional dy', () => {
+      expect(parseMultivariateDataset('3,4,5\n5 12 13 0.1\n8;15;17').points).toEqual([
+        { c1: 3, c2: 4, y: 5, dy: 0 },
+        { c1: 5, c2: 12, y: 13, dy: 0.1 },
+        { c1: 8, c2: 15, y: 17, dy: 0 },
+      ]);
+    });
+
+    it('requires three distinct finite input pairs', () => {
+      expect(parseMultivariateDataset('3,4,5\n5,12,13').error).toMatch(/at least three/i);
+      expect(parseMultivariateDataset('3,4,5\n3,4,5\n8,15,17').error).toMatch(/duplicate/i);
+      expect(parseMultivariateDataset('3,4,5\n5,12,13,-1\n8,15,17').error).toMatch(/non-negative/i);
     });
   });
 

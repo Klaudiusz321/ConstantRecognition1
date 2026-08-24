@@ -32,7 +32,9 @@ import {
 import { FormTokenKind } from '../app/calculator/lib/webgpu-v2/types';
 import {
   functionMeanSquaredError,
+  multivariateMeanSquaredError,
   parseFunctionDataset,
+  parseMultivariateDataset,
 } from '../app/calculator/lib/search-contract';
 
 const EXPECTED_FORM_COUNTS = [1, 1, 2, 4, 9, 21, 51, 127, 323];
@@ -145,6 +147,20 @@ describe('CPU verifier matches the professor C core', () => {
     expect(evaluateCoreRPN(['TWO', 'x', 'POWER'], 3)).toBe(9);
     expect(evaluateCoreRPN(['TWO', 'x', 'SUBTRACT'], 3)).toBe(1);
   });
+
+  it('evaluates C1 and C2 as independent terminals', () => {
+    const tokens = ['C1', 'SQR', 'C2', 'SQR', 'PLUS', 'SQRT'] as const;
+    expect(evaluateCoreRPN(tokens, { C1: 3, C2: 4 })).toBe(5);
+    expect(evaluateCoreRPN(tokens, { C1: 5, C2: 12 })).toBe(13);
+  });
+});
+
+describe('scientific two-variable search contract', () => {
+  it('parses rows and computes dy-weighted MSE', () => {
+    const points = parseMultivariateDataset('3,4,5\n5,12,13,0.1\n8,15,17').points;
+    expect(points).toHaveLength(3);
+    expect(multivariateMeanSquaredError([5, 13.1, 17], points)).toBeCloseTo(1 / 3, 12);
+  });
 });
 
 describe('scientific function-search contract', () => {
@@ -227,6 +243,17 @@ describe('calculator selection', () => {
     expect(calculator.constCodes.length + calculator.variableNames.length).toBe(2);
     expect([...calculator.constCodes]).toEqual([CALC4_CONSTANTS.indexOf('PI')]);
   });
+
+  it('adds C1 and C2 as two distinct terminals', () => {
+    const calculator = compileCalculator({
+      consts: [],
+      funcs: ['SQR', 'SQRT'],
+      ops: ['PLUS'],
+      variables: ['C1', 'C2'],
+    });
+    expect(calculator.variableNames).toEqual(['C1', 'C2']);
+    expect(calculator.constCodes.length + calculator.variableNames.length).toBe(2);
+  });
 });
 
 describe('WGSL regression guards', () => {
@@ -251,8 +278,10 @@ describe('WGSL regression guards', () => {
     expect(shader).toContain('atomicStore(&state.overflow, 1u)');
   });
 
-  it('screens function candidates across all data points and requires x', () => {
-    expect(shader).toContain('contains_variable');
+  it('screens function candidates across all data points and requires all variables', () => {
+    expect(shader).toContain('contains_all_variables');
+    expect(shader).toContain('variable_count == 1u || found.y == 1u');
+    expect(shader).toContain('point.xy');
     expect(shader).toContain('params.search.y');
     expect(shader).toContain('total_error / f32(max(params.search.y, 1u))');
   });

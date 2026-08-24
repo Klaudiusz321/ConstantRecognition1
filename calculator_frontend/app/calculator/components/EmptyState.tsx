@@ -19,6 +19,11 @@ export function EmptyState({ onExampleClick, searchMode }: EmptyStateProps) {
           title: 'Function data ready',
           description: 'Enter measured points as x, y[, dy]. The variable x is enabled automatically and candidates are ranked by weighted mean squared error.',
         }
+      : searchMode === 'multivariate'
+        ? {
+            title: 'Two-variable data ready',
+            description: 'Enter rows as C₁, C₂, y[, dy]. Both variables are required, and CPU/WASM or GPU searches for one formula fitting every row.',
+          }
       : {
           title: 'Ready to identify',
           description: 'Enter a decimal number above to search for matching mathematical expressions using the selected calculator operations.',

@@ -88,9 +88,21 @@ export function Sidebar({
   const earlyExitCRNote = toleranceSearchActive
     ? 'Applies to CPU/WASM and CPU-verified GPU search.'
     : 'Ignored for exact search (± 0). Use Auto or Manual uncertainty to enable it.';
-  const noConstants = searchMode !== 'function' && !enabledTokens.some(
+  const noConstants = searchMode !== 'function' && searchMode !== 'multivariate' && !enabledTokens.some(
     (t) => calculator.constantsCore.includes(t) || calculator.constantsRedundant.includes(t),
   );
+  const selectedConstants = [
+    ...calculator.constantsCore,
+    ...calculator.constantsRedundant,
+  ].filter((token) => enabledTokens.includes(token));
+  const selectedFunctions = [
+    ...calculator.unaryCore,
+    ...calculator.unaryRedundant,
+  ].filter((token) => enabledTokens.includes(token));
+  const selectedOperators = [
+    ...calculator.operatorsCommutative,
+    ...calculator.operatorsNoncommutative,
+  ].filter((token) => enabledTokens.includes(token));
   const friendlyAdapterName = formatGPUAdapterName(gpuAdapterName);
   const friendlyGPUError = formatGPUError(gpuError);
 
@@ -140,6 +152,7 @@ export function Sidebar({
                 alt="Logo"
                 width={40}
                 height={40}
+                style={{ width: 40, height: 40 }}
                 className="w-10 h-10 rounded-lg object-cover"
               />
               <div>
@@ -262,6 +275,12 @@ export function Sidebar({
                 Variable x is enabled automatically. Constants remain optional; selected functions and operators define the function search space.
               </p>
             )}
+            {searchMode === 'multivariate' && (
+              <div className="space-y-1 text-[11px] leading-4 text-blue-700 dark:text-blue-300">
+                <p>Variables C₁ and C₂ are enabled automatically and both are required in every accepted expression. Constants are optional.</p>
+                <p>The initial SQR + SQRT + PLUS grammar reproduces the reference formula quickly. Use Enable all or individual buttons to broaden it.</p>
+              </div>
+            )}
             {searchMode === 'multiple' && (
               <p className="text-[11px] leading-4 text-blue-700 dark:text-blue-300">
                 The same selected constants, functions and operators are evaluated against every target. Variable x is disabled.
@@ -331,6 +350,29 @@ export function Sidebar({
             </div>
             <p className="text-[10px] text-gray-400">Search expressions with up to K symbols</p>
           </div>
+
+          {searchMode === 'multivariate' && (
+            <section
+              aria-labelledby="scientific-search-contract"
+              className="space-y-2 rounded-xl border border-blue-100 bg-blue-50/60 p-3 text-[11px] leading-4 text-gray-700 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-gray-300"
+            >
+              <h2 id="scientific-search-contract" className="text-[10px] font-semibold uppercase tracking-wider text-blue-700 dark:text-blue-300">
+                Scientific search contract
+              </h2>
+              <dl className="space-y-1.5">
+                <div><dt className="inline font-semibold">Variables:</dt>{' '}<dd className="inline font-mono">C1, C2</dd> (both required)</div>
+                <div><dt className="inline font-semibold">Constants ({selectedConstants.length}):</dt>{' '}<dd className="inline break-words font-mono">{selectedConstants.join(', ') || 'none'}</dd></div>
+                <div><dt className="inline font-semibold">Operators ({selectedOperators.length}):</dt>{' '}<dd className="inline break-words font-mono">{selectedOperators.join(', ') || 'none'}</dd></div>
+                <div><dt className="inline font-semibold">Functions ({selectedFunctions.length}):</dt>{' '}<dd className="inline break-words font-mono">{selectedFunctions.join(', ') || 'none'}</dd></div>
+                <div><dt className="inline font-semibold">Maximum formula length:</dt>{' '}<dd className="inline font-mono">K = {searchDepth}</dd> symbols</div>
+                <div><dt className="inline font-semibold">Maximum operations:</dt>{' '}<dd className="inline font-mono">K − 1 = {Math.max(searchDepth - 1, 0)}</dd> (structural upper bound)</div>
+                <div><dt className="inline font-semibold">Expression cost:</dt>{' '}<dd className="inline font-mono">cost = terminals + unary + binary = K</dd></div>
+              </dl>
+              <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                Candidates are ranked by weighted MSE and confirmed at MSE ≤ 1e−12 after CPU FP64 verification.
+              </p>
+            </section>
+          )}
 
           {/* Threads */}
           <div className="space-y-2">

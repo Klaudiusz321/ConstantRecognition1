@@ -20,6 +20,9 @@ interface InputBarProps {
   multipleDataset: string;
   setMultipleDataset: (value: string) => void;
   multipleDatasetError?: string | null;
+  multivariateDataset: string;
+  setMultivariateDataset: (value: string) => void;
+  multivariateDatasetError?: string | null;
   onOpenWizard: () => void;
 }
 
@@ -27,12 +30,15 @@ export function hasBlockingDatasetError(
   searchMode: SearchMode,
   functionDatasetError: string | null | undefined,
   multipleDatasetError: string | null | undefined,
+  multivariateDatasetError?: string | null,
 ): boolean {
   return searchMode === 'function'
     ? Boolean(functionDatasetError)
     : searchMode === 'multiple'
       ? Boolean(multipleDatasetError)
-      : false;
+      : searchMode === 'multivariate'
+        ? Boolean(multivariateDatasetError)
+        : false;
 }
 
 export function InputBar({
@@ -51,6 +57,9 @@ export function InputBar({
   multipleDataset,
   setMultipleDataset,
   multipleDatasetError,
+  multivariateDataset,
+  setMultivariateDataset,
+  multivariateDatasetError,
   onOpenWizard,
 }: InputBarProps) {
   const statusClasses = {
@@ -69,6 +78,7 @@ export function InputBar({
               { value: 'constant' as const, label: 'One constant' },
               { value: 'multiple' as const, label: 'Multiple constants' },
               { value: 'function' as const, label: 'Function f(x)' },
+              { value: 'multivariate' as const, label: 'Function F(C₁,C₂)' },
             ]).map((option) => (
               <button
                 key={option.value}
@@ -133,6 +143,25 @@ export function InputBar({
             </p>
           </div>
         )}
+        {searchMode === 'multivariate' && (
+          <div className="mb-3">
+            <label htmlFor="multivariate-dataset" className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+              Data points — one row per C₁, C₂, y[, dy]
+            </label>
+            <textarea
+              id="multivariate-dataset"
+              value={multivariateDataset}
+              onChange={(event) => setMultivariateDataset(event.target.value)}
+              disabled={isCalculating}
+              rows={6}
+              spellCheck={false}
+              className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-900 focus:border-[#0066cc] focus:outline-none focus:ring-1 focus:ring-[#0066cc] dark:border-[#2a2a2e] dark:bg-[#111113] dark:text-white"
+            />
+            <p className={`mt-1 text-xs ${multivariateDatasetError ? 'text-red-600 dark:text-red-400' : 'text-gray-500'}`}>
+              {multivariateDatasetError ?? 'Example describes F(C₁,C₂)=√(C₁²+C₂²). Optional dy weights measurement uncertainty.'}
+            </p>
+          </div>
+        )}
         <div className="flex flex-col sm:flex-row gap-3 sm:gap-3">
           <div className="flex-1 relative">
             {searchMode === 'constant' ? (
@@ -149,6 +178,10 @@ export function InputBar({
               <div className="flex min-h-12 items-center rounded-lg border border-gray-200 bg-gray-50 px-4 text-sm text-gray-600 dark:border-[#2a2a2e] dark:bg-[#111113] dark:text-gray-300">
                 Search for one RPN expression containing x that fits every data point.
               </div>
+            ) : searchMode === 'multivariate' ? (
+              <div className="flex min-h-12 items-center rounded-lg border border-gray-200 bg-gray-50 px-4 text-sm text-gray-600 dark:border-[#2a2a2e] dark:bg-[#111113] dark:text-gray-300">
+                Search for one RPN expression containing both C₁ and C₂ that fits every row.
+              </div>
             ) : (
               <div className="flex min-h-12 items-center rounded-lg border border-gray-200 bg-gray-50 px-4 text-sm text-gray-600 dark:border-[#2a2a2e] dark:bg-[#111113] dark:text-gray-300">
                 Search the selected calculator once and match expressions against every target.
@@ -162,7 +195,12 @@ export function InputBar({
                 (searchMode === 'constant' && !inputValue) ||
                 isCalculating ||
                 !canCalculate ||
-                hasBlockingDatasetError(searchMode, functionDatasetError, multipleDatasetError)
+                hasBlockingDatasetError(
+                  searchMode,
+                  functionDatasetError,
+                  multipleDatasetError,
+                  multivariateDatasetError,
+                )
               }
               title={canCalculate ? undefined : 'Enable at least one constant in the calculator palette'}
               className="flex-1 sm:flex-none px-6 py-3 bg-[#0066cc] hover:bg-[#0052a3] disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed"

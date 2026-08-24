@@ -13,7 +13,7 @@ export const CALC4_BINARY = [
   'PLUS', 'TIMES', 'SUBTRACT', 'DIVIDE', 'POWER',
 ] as const;
 
-export const CALC4_VARIABLES = ['x'] as const;
+export const CALC4_VARIABLES = ['x', 'C1', 'C2'] as const;
 
 export type ConstantToken = (typeof CALC4_CONSTANTS)[number];
 export type UnaryToken = (typeof CALC4_UNARY)[number];

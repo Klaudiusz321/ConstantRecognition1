@@ -3,7 +3,7 @@
 // Error mode for uncertainty handling
 export type ErrorMode = 'zero' | 'automatic' | 'manual' | 'large_errors';
 
-export type SearchMode = 'constant' | 'multiple' | 'function';
+export type SearchMode = 'constant' | 'multiple' | 'function' | 'multivariate';
 
 export interface BatchTarget {
   /** Stable one-based identifier used to join worker results with the input row. */
@@ -15,6 +15,16 @@ export interface BatchTarget {
 
 export interface FunctionPoint {
   x: number;
+  y: number;
+  /** Optional measurement uncertainty. Zero means unweighted. */
+  dy: number;
+}
+
+export interface MultivariatePoint {
+  /** First independent variable (displayed as C₁). */
+  c1: number;
+  /** Second independent variable (displayed as C₂). */
+  c2: number;
   y: number;
   /** Optional measurement uncertainty. Zero means unweighted. */
   dy: number;

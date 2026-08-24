@@ -245,7 +245,7 @@ export function rpnToMathematica(rpn: string | string[]): string {
     "NEG": "(-1)", "ZERO": "0", "ONE": "1", "TWO": "2", "THREE": "3",
     "FOUR": "4", "FIVE": "5", "SIX": "6", "SEVEN": "7", "EIGHT": "8",
     "NINE": "9", "PI": "Pi", "EULER": "E", "GOLDENRATIO": "GoldenRatio",
-    "EULER_GAMMA": "EulerGamma", "POL": "(1/2)"
+    "EULER_GAMMA": "EulerGamma", "POL": "(1/2)", "x": "x", "C1": "C1", "C2": "C2"
   };
   const mmaFunctions: Record<string, string> = {
     "EXP": "Exp", "LOG": "Log", "SIN": "Sin", "ARCSIN": "ArcSin",
@@ -278,8 +278,11 @@ export function rpnToMathematica(rpn: string | string[]): string {
       const left = stack.pop() || '?';   // second
       // Compact GPU RPN uses standard operand order. The WASM core uses the
       // historical reversed order for non-commutative operators.
-      const lhs = isShort ? left : right;
-      const rhs = isShort ? right : left;
+      // PLUS and TIMES are unchanged by the historical C-core pop order, so
+      // retain source order for a stable, readable formula.
+      const commutative = token === 'PLUS' || token === 'TIMES';
+      const lhs = isShort || commutative ? left : right;
+      const rhs = isShort || commutative ? right : left;
       if (token === 'POWER') {
         // Parenthesize both operands so Mathematica/Wolfram cannot interpret
         // x ^ 1/(Cos[x]) as (x ^ 1) / Cos[x].
@@ -318,7 +321,7 @@ export function rpnToLatex(rpn: string | string[]): string {
     "NEG": "(-1)", "ZERO": "0", "ONE": "1", "TWO": "2", "THREE": "3",
     "FOUR": "4", "FIVE": "5", "SIX": "6", "SEVEN": "7", "EIGHT": "8",
     "NINE": "9", "PI": "\\pi", "EULER": "e", "GOLDENRATIO": "\\varphi",
-    "EULER_GAMMA": "\\gamma"
+    "EULER_GAMMA": "\\gamma", "x": "x", "C1": "C_{1}", "C2": "C_{2}"
   };
   
   const latexFunctions: Record<string, (x: string) => string> = {
@@ -355,8 +358,9 @@ export function rpnToLatex(rpn: string | string[]): string {
     } else if (latexOperators.has(token)) {
       const right = stack.pop() || { latex: '?', precedence: 5 };  // top
       const left = stack.pop() || { latex: '?', precedence: 5 };   // second
-      const lhs = isShort ? left : right;
-      const rhs = isShort ? right : left;
+      const commutative = token === 'PLUS' || token === 'TIMES';
+      const lhs = isShort || commutative ? left : right;
+      const rhs = isShort || commutative ? right : left;
 
       if (token === 'PLUS') {
         const leftLatex = wrapWithParens(lhs, 1);

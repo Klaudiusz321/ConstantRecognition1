@@ -89,6 +89,58 @@ function callFunctionSearch(task) {
     }
 }
 
+function callMultivariateSearch(task) {
+    const points = Array.isArray(task.multivariatePoints) ? task.multivariatePoints : [];
+    if (points.length < 3) {
+        throw new Error('Two-variable recognition requires at least three data points.');
+    }
+
+    const heapF64 = (typeof HEAPF64 !== 'undefined') ? HEAPF64 : Module.HEAPF64;
+    if (!heapF64 || typeof Module._malloc !== 'function') {
+        throw new Error('The WASM runtime does not expose FP64 data memory.');
+    }
+
+    const bytes = points.length * Float64Array.BYTES_PER_ELEMENT;
+    const c1Ptr = Module._malloc(bytes);
+    const c2Ptr = Module._malloc(bytes);
+    const yPtr = Module._malloc(bytes);
+    const dyPtr = Module._malloc(bytes);
+    if (!c1Ptr || !c2Ptr || !yPtr || !dyPtr) {
+        if (c1Ptr) Module._free(c1Ptr);
+        if (c2Ptr) Module._free(c2Ptr);
+        if (yPtr) Module._free(yPtr);
+        if (dyPtr) Module._free(dyPtr);
+        throw new Error('Unable to allocate WASM memory for two-variable data.');
+    }
+
+    try {
+        heapF64.set(points.map(point => point.c1), c1Ptr / 8);
+        heapF64.set(points.map(point => point.c2), c2Ptr / 8);
+        heapF64.set(points.map(point => point.y), yPtr / 8);
+        heapF64.set(points.map(point => point.dy || 0), dyPtr / 8);
+
+        const restricted =
+            task.constList !== undefined || task.funcList !== undefined || task.opList !== undefined;
+        if (restricted && typeof Module._search_multivariate_custom_wasm === 'function') {
+            return callSearch('search_multivariate_custom_wasm',
+                ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'string', 'string', 'string'],
+                [c1Ptr, c2Ptr, yPtr, dyPtr, points.length,
+                 task.MinCodeLength, task.MaxCodeLength, task.cpuId, task.ncpus,
+                 task.constList || '', task.funcList || '', task.opList || '']);
+        }
+
+        return callSearch('search_multivariate_wasm',
+            ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'number'],
+            [c1Ptr, c2Ptr, yPtr, dyPtr, points.length,
+             task.MinCodeLength, task.MaxCodeLength, task.cpuId, task.ncpus]);
+    } finally {
+        Module._free(c1Ptr);
+        Module._free(c2Ptr);
+        Module._free(yPtr);
+        Module._free(dyPtr);
+    }
+}
+
 function callBatchSearch(task) {
     const targets = Array.isArray(task.batchTargets) ? task.batchTargets : [];
     if (targets.length < 2) throw new Error('Multiple-constant recognition requires at least two targets.');
@@ -155,6 +207,9 @@ function doWork(task) {
     try {
         if (task.searchMode === 'function') {
             return callFunctionSearch(task);
+        }
+        if (task.searchMode === 'multivariate') {
+            return callMultivariateSearch(task);
         }
         if (task.searchMode === 'multiple') {
             return callBatchSearch(task);

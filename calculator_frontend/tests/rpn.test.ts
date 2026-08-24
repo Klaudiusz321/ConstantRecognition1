@@ -24,4 +24,10 @@ describe('RPN display formats', () => {
     const rpn = 'x, COS, INV, x, POWER';
     expect(rpnToMathematica(rpn)).toBe('(x)^(1/(Cos[x]))');
   });
+
+  it('renders the two-variable Pythagorean formula without placeholder tokens', () => {
+    const rpn = 'C1, SQR, C2, SQR, PLUS, SQRT';
+    expect(rpnToLatex(rpn)).toBe('\\sqrt{(C_{1})^2 + (C_{2})^2}');
+    expect(rpnToMathematica(rpn)).toBe('Sqrt[((C1)^2 + (C2)^2)]');
+  });
 });
