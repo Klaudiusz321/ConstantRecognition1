@@ -35,6 +35,31 @@ export function formatGPUError(error: string | null | undefined): string | null 
   return normalized || null;
 }
 
+/**
+ * GPU screening stores inputs in FP32. Refuse values that would become an
+ * infinity or silently collapse to zero; CPU/WASM can still process them as
+ * FP64 without changing the global GPU readiness state.
+ */
+export function getGPUInputCompatibilityError(values: readonly number[]): string | null {
+  for (const value of values) {
+    if (!Number.isFinite(value)) {
+      return 'GPU screening requires finite numerical inputs.';
+    }
+    const fp32 = Math.fround(value);
+    if (!Number.isFinite(fp32)) {
+      return `Input value ${value.toExponential(6)} is outside the finite FP32 range used for GPU screening.`;
+    }
+    if (value !== 0 && fp32 === 0) {
+      return `Input value ${value.toExponential(6)} would round to zero during FP32 GPU screening.`;
+    }
+  }
+  return null;
+}
+
+export function getGPUInputFallbackNotice(reason: string): string {
+  return `${reason} This search is using CPU/WASM FP64 instead; GPU readiness is unchanged.`;
+}
+
 export function getAccelerationStatus({
   checked,
   supported,

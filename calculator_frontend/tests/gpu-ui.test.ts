@@ -5,6 +5,8 @@ import {
   formatGPUError,
   getAccelerationStatus,
   getGPUFallbackNotice,
+  getGPUInputCompatibilityError,
+  getGPUInputFallbackNotice,
 } from '../app/calculator/lib/gpu-ui';
 
 describe('GPU interface state', () => {
@@ -162,5 +164,15 @@ describe('GPU interface state', () => {
       description: 'Cannot load GPU shader (404 Not Found).',
       tone: 'warning',
     });
+  });
+
+  it('routes values outside FP32 to CPU without invalidating a healthy GPU', () => {
+    expect(getGPUInputCompatibilityError([0, Math.PI, 1e-20])).toBeNull();
+    expect(getGPUInputCompatibilityError([Number.MAX_VALUE])).toMatch(/outside the finite FP32 range/i);
+    expect(getGPUInputCompatibilityError([Number.MIN_VALUE])).toMatch(/round to zero/i);
+
+    const notice = getGPUInputFallbackNotice('Input is outside FP32 range.');
+    expect(notice).toContain('CPU/WASM FP64');
+    expect(notice).toContain('GPU readiness is unchanged');
   });
 });

@@ -28,7 +28,13 @@ import {
   parseMultipleConstantsDataset,
 } from './lib/search-contract';
 import { WebGPUConstantRecognizer, type GPUProgress } from './lib/webgpu-v2';
-import { describeGPUCompletion, getAccelerationStatus, getGPUFallbackNotice } from './lib/gpu-ui';
+import {
+  describeGPUCompletion,
+  getAccelerationStatus,
+  getGPUFallbackNotice,
+  getGPUInputCompatibilityError,
+  getGPUInputFallbackNotice,
+} from './lib/gpu-ui';
 import {
   Sidebar,
   InputBar,
@@ -410,9 +416,33 @@ export default function CalculatorPage() {
         + (searchMode === 'function' ? 1 : 0),
     );
 
-    const shouldTryGPU = computeEngine === 'gpu' || (
+    const gpuWasRequested = computeEngine === 'gpu' || (
       computeEngine === 'auto' && (!gpuChecked || gpuSupported)
     );
+    const gpuInputValues = searchMode === 'function'
+      ? (functionPoints ?? []).flatMap(point => point.dy > 0
+          ? [point.x, point.y, point.dy]
+          : [point.x, point.y])
+      : searchMode === 'multiple'
+        ? (batchTargets ?? []).flatMap(target => target.dy > 0
+            ? [target.value, target.dy]
+            : [target.value])
+        : deltaZNum > 0
+          ? [zNum, deltaZNum]
+          : [zNum];
+    const gpuInputError = getGPUInputCompatibilityError(gpuInputValues);
+
+    if (gpuWasRequested && gpuInputError && computeEngine === 'gpu') {
+      setSearchError(`GPU search cannot start: ${gpuInputError} Select CPU or Auto for this input.`);
+      stopTimer();
+      setSearchPhase('error');
+      return;
+    }
+    if (gpuWasRequested && gpuInputError && computeEngine === 'auto') {
+      setSearchNotice(getGPUInputFallbackNotice(gpuInputError));
+    }
+
+    const shouldTryGPU = gpuWasRequested && !gpuInputError;
 
     if (shouldTryGPU) {
       setGpuError(null);
