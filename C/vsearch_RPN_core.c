@@ -534,6 +534,36 @@ char* vsearch_core(
     int num_to_find,
     double cr_threshold)
 {
+    /* K is always the global RPN token count. Reject invalid ranges before
+       touching fixed-size program/stack buffers or dividing the ternary space
+       between workers. Calculator size and parallelism never redefine K. */
+    if (MinK < 1 || MaxK < MinK || MaxK > MAX_CODE_LENGTH) {
+        return strdup("{\"error\":\"Expected 1 <= MinK <= MaxK <= 32\",\"status\":\"ERROR\"}");
+    }
+    if (ncpus < 1 || cpu_id < 0 || cpu_id >= ncpus) {
+        return strdup("{\"error\":\"Expected 0 <= cpu_id < ncpus and ncpus >= 1\",\"status\":\"ERROR\"}");
+    }
+    if (data == NULL || n_data < 1) {
+        return strdup("{\"error\":\"At least one data point is required\",\"status\":\"ERROR\"}");
+    }
+    if (mode < MODE_CONSTANT || mode > MODE_MULTIVARIATE ||
+        metric < ERROR_ABS || metric > ERROR_HAMMING ||
+        compare < COMPARE_STRICT || compare > COMPARE_EQUAL) {
+        return strdup("{\"error\":\"Invalid search mode, error metric, or comparison mode\",\"status\":\"ERROR\"}");
+    }
+    if (n_const < 0 || n_unary < 0 || n_binary < 0 ||
+        (n_const > 0 && const_ops == NULL) ||
+        (n_unary > 0 && unary_ops == NULL) ||
+        (n_binary > 0 && binary_ops == NULL)) {
+        return strdup("{\"error\":\"Invalid calculator instruction table\",\"status\":\"ERROR\"}");
+    }
+    if (n_const + variable_count(mode) < 1) {
+        return strdup("{\"error\":\"The selected mode requires at least one terminal\",\"status\":\"ERROR\"}");
+    }
+    if (!isfinite(cr_threshold) || cr_threshold < 0.0) {
+        return strdup("{\"error\":\"Compression-ratio threshold must be finite and non-negative\",\"status\":\"ERROR\"}");
+    }
+
     char* json_output = (char*)malloc(JSON_BUFFER_SIZE);
     if (!json_output) return strdup("{\"error\":\"Memory allocation failed\"}");
     

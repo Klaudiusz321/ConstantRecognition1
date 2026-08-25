@@ -5,6 +5,12 @@ import Image from 'next/image';
 import { ActiveWorker, Precision, ErrorMode, ComputeEngine, type SearchMode } from '../lib/types';
 import { formatGPUAdapterName, formatGPUError } from '../lib/gpu-ui';
 import { getCalculatorById, DEFAULT_CALCULATOR_ID } from '../lib/calculators';
+import {
+  GPU_PROGRAM_BUDGET,
+  GPU_TIME_BUDGET_MS,
+  buildSearchComplexityPlan,
+  formatBigInt,
+} from '../lib/search-complexity';
 import { CalculatorPalette } from './CalculatorPalette';
 
 interface SidebarProps {
@@ -42,6 +48,8 @@ interface SidebarProps {
   onToggleToken: (token: string) => void;
   onEnableAll: () => void;
   searchMode: SearchMode | null;
+  /** Independent targets/observations evaluated for every candidate program. */
+  samplesPerProgram: number;
 }
 
 export function Sidebar({
@@ -77,6 +85,7 @@ export function Sidebar({
   onToggleToken,
   onEnableAll,
   searchMode,
+  samplesPerProgram,
 }: SidebarProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const calculator = getCalculatorById(DEFAULT_CALCULATOR_ID);
@@ -105,6 +114,15 @@ export function Sidebar({
   ].filter((token) => enabledTokens.includes(token));
   const friendlyAdapterName = formatGPUAdapterName(gpuAdapterName);
   const friendlyGPUError = formatGPUError(gpuError);
+  const variableCount = searchMode === 'function' ? 1 : searchMode === 'multivariate' ? 2 : 0;
+  const complexityPlan = buildSearchComplexityPlan(searchDepth, {
+    terminals: selectedConstants.length + variableCount,
+    unary: selectedFunctions.length,
+    binary: selectedOperators.length,
+  }, samplesPerProgram);
+  const selectedComplexity = complexityPlan.selected;
+  const gpuProgramBudgetExceeded =
+    selectedComplexity.cumulativePrograms > GPU_PROGRAM_BUDGET;
 
   return (
     <>
@@ -331,10 +349,12 @@ export function Sidebar({
             </div>
           )}
 
-          {/* Complexity (K) - always visible */}
+          {/* K is a global RPN program-length bound. Calculator/data/hardware
+              sizes are reported separately so the scientific parameter never
+              changes meaning between modes or backends. */}
           <div className="space-y-2">
             <label className="text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
-              Complexity (K)
+              Maximum RPN length (K)
             </label>
             <div className="flex items-center gap-3">
               <input
@@ -348,7 +368,57 @@ export function Sidebar({
               />
               <span className="font-mono text-sm font-bold text-gray-900 dark:text-white w-4">{searchDepth}</span>
             </div>
-            <p className="text-[10px] text-gray-400">Search expressions with up to K symbols</p>
+            <p className="text-[10px] text-gray-400">
+              K is the number of calculator tokens in one candidate program, searched globally from 1 through K.
+            </p>
+            <div className="space-y-2 rounded-xl border border-gray-200 bg-gray-50 p-3 text-[11px] leading-4 text-gray-600 dark:border-[#2a2a2e] dark:bg-[#111113] dark:text-gray-400">
+              <div className="flex items-center justify-between gap-3">
+                <span>Active alphabet</span>
+                <strong className="font-mono font-medium text-gray-800 dark:text-gray-200">
+                  {complexityPlan.alphabetSize} tokens
+                </strong>
+              </div>
+              <div className="font-mono text-[10px] text-gray-500">
+                T={complexityPlan.alphabet.terminals} · U={complexityPlan.alphabet.unary} · B={complexityPlan.alphabet.binary}
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Valid programs at K={searchDepth}</span>
+                <strong className="font-mono font-medium text-gray-800 dark:text-gray-200">
+                  {formatBigInt(selectedComplexity.programs)}
+                </strong>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Cumulative programs (≤K)</span>
+                <strong className="font-mono font-medium text-gray-800 dark:text-gray-200">
+                  {formatBigInt(selectedComplexity.cumulativePrograms)}
+                </strong>
+              </div>
+              {samplesPerProgram > 1 && (
+                <div className="flex items-center justify-between gap-3">
+                  <span>Dataset evaluations (×{samplesPerProgram})</span>
+                  <strong className="font-mono font-medium text-gray-800 dark:text-gray-200">
+                    {formatBigInt(selectedComplexity.scalarEvaluations)}
+                  </strong>
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-3">
+                <span>Fixed-width description</span>
+                <strong className="font-mono font-medium text-gray-800 dark:text-gray-200">
+                  {complexityPlan.descriptionBits.toFixed(2)} bits
+                </strong>
+              </div>
+              <p className="border-t border-gray-200 pt-2 text-[10px] dark:border-[#2a2a2e]">
+                Counts use exact RPN stack grammar: terminals push, unary functions preserve stack depth, and binary operators reduce it.
+              </p>
+              {gpuProgramBudgetExceeded && computeEngine !== 'cpu' && (
+                <p className="rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                  The browser GPU cap ({formatBigInt(GPU_PROGRAM_BUDGET)} programs or {GPU_TIME_BUDGET_MS / 1000}s) is exhaustive only through K={complexityPlan.gpuCompleteThroughK} for this alphabet. A deeper GPU result is explicitly reported as partial.
+                </p>
+              )}
+              <p className="text-[10px]">
+                CPU threads and GPU workgroups divide this same space; they affect elapsed time, never K or the candidate count.
+              </p>
+            </div>
           </div>
 
           {searchMode === 'multivariate' && (

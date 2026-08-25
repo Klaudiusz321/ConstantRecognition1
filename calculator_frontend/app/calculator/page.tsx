@@ -22,6 +22,10 @@ import {
 } from './lib/taskQueue';
 import { getCompressionRatio as computeCR } from './lib/cr';
 import {
+  GPU_PROGRAM_BUDGET,
+  GPU_TIME_BUDGET_MS,
+} from './lib/search-complexity';
+import {
   DEFAULT_FUNCTION_DATASET,
   DEFAULT_MULTIPLE_DATASET,
   DEFAULT_MULTIVARIATE_DATASET,
@@ -263,8 +267,9 @@ export default function CalculatorPage() {
 
     const checkWasm = async () => {
       try {
-        //const response = await fetch('/wasm/rpn_function.wasm');
-        const response = await fetch(withBasePath('/wasm/rpn_function.wasm'));
+        // Probe the same unified module loaded by worker.js. The legacy
+        // rpn_function module does not prove that the production CPU path is ready.
+        const response = await fetch(withBasePath('/wasm/vsearch.wasm'));
         if (!cancelled) setWasmLoaded(response.ok);
       } catch {
         if (!cancelled) setWasmLoaded(false);
@@ -502,8 +507,8 @@ export default function CalculatorPage() {
               absoluteTolerance: target.dy,
               compressionRatioThreshold: earlyExitCRThreshold,
               ranking: 'relative-error',
-              maxEvaluations: BigInt(100_000_000),
-              maxDurationMs: 30_000,
+              maxEvaluations: GPU_PROGRAM_BUDGET,
+              maxDurationMs: GPU_TIME_BUDGET_MS,
               topN: 20,
               signal: controller.signal,
               onProgress: (progress: GPUProgress) => {
@@ -575,8 +580,8 @@ export default function CalculatorPage() {
           multivariatePoints,
           functionErrorTolerance: 1e-12,
           ranking: exactSearch ? 'relative-error' : 'compression-ratio',
-          maxEvaluations: BigInt(100_000_000),
-          maxDurationMs: 30_000,
+          maxEvaluations: GPU_PROGRAM_BUDGET,
+          maxDurationMs: GPU_TIME_BUDGET_MS,
           topN: 100,
           signal: controller.signal,
           onProgress: (progress: GPUProgress) => {
@@ -1089,6 +1094,13 @@ export default function CalculatorPage() {
         onToggleToken={toggleToken}
         onEnableAll={enableAllTokens}
         searchMode={searchMode}
+        samplesPerProgram={searchMode === 'function'
+          ? Math.max(parsedFunctionDataset.points.length, 1)
+          : searchMode === 'multivariate'
+            ? Math.max(parsedMultivariateDataset.points.length, 1)
+            : searchMode === 'multiple'
+              ? Math.max(parsedMultipleDataset.targets.length, 1)
+              : 1}
       />
 
       {/* Main content */}

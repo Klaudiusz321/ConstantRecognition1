@@ -34,6 +34,8 @@ const notation = [
   ["Delta z", "absolute uncertainty of the input value"],
   ["delta z", "relative uncertainty Delta z / z"],
   ["K", "length of the RPN code being searched"],
+  ["T, U, B", "counts of terminals, unary functions, and binary operators in the active calculator"],
+  ["I_K", "fixed-width description length K log2(T+U+B), used to compare calculator alphabets"],
   ["RPN", "reverse Polish notation button sequence"],
   ["CR", "compression-style ranking signal balancing error and length"],
   ["x, y", "input and observed output for univariate function recognition"],
@@ -160,10 +162,20 @@ export default function DocsPage() {
               Consequence for runtime
             </h3>
             <p className="mt-3 leading-7 text-slate-600">
-              If the calculator alphabet has 36 buttons, increasing K by one
-              multiplies the naive search space by about 36. Parallel CPU
-              workers and WebGPU help, but the combinatorial growth remains the
-              central limitation.
+              K always counts RPN tokens; it is not a constant count, operation
+              count, or thread count. For an active alphabet with T terminals,
+              U unary functions, and B binary operators, the implementation
+              counts stack-valid programs exactly. A valid structure with
+              t terminal, u unary, and b binary positions contributes
+              T^t U^u B^b candidates. Parallel CPU workers and WebGPU divide
+              this same set without changing K or its cardinality.
+            </p>
+            <p className="mt-3 leading-7 text-slate-600">
+              For cross-calculator reporting, the fixed-width information cost
+              is I_K = K log2(T+U+B) bits. Dataset size is separate again: a
+              batch or fitted function evaluates each candidate against every
+              target or observation. The calculator now reports all of these
+              quantities before the search starts.
             </p>
           </div>
         </div>
@@ -378,6 +390,17 @@ export default function DocsPage() {
             If the tool contributes to a publication, cite the repository or
             deployed version and include the search parameters needed to
             reproduce the candidate.
+          </p>
+          <p className="mt-4 max-w-3xl leading-7 text-slate-600">
+            The stopping and compression criteria follow Andrzej Odrzywolek,
+            {" "}
+            <a
+              href="https://arxiv.org/abs/2002.12690"
+              className="font-medium text-blue-700 underline decoration-blue-200 underline-offset-4 hover:text-blue-900"
+            >
+              Criteria for the numerical constant recognition
+            </a>
+            .
           </p>
           <pre className="mt-6 overflow-x-auto rounded-lg border border-slate-200 bg-slate-950 p-5 text-sm text-slate-100">
 {`Constant Recognition, A. Odrzywolek and K. Sroka.
