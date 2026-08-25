@@ -1,7 +1,11 @@
 
 import {
+  CALC4_BINARY,
+  CALC4_CONSTANTS,
+  CALC4_UNARY,
   compileCalculator,
   FULL_CALC4,
+  type CalculatorToken,
   type CompiledCalculator,
 } from './calculator';
 import { functionMeanSquaredError, multivariateMeanSquaredError } from '../search-contract';
@@ -12,6 +16,7 @@ import { getCompressionRatio, isAcceptedCandidate } from './metrics';
 import { decodeCombination, indexToDigits } from './mixed-radix';
 import {
   MAX_GPU_K,
+  MAX_GROUP_BEST_TO_VERIFY,
   MAX_OPS_PER_KIND,
   RESULT_BYTES,
   type GPURecognizerInfo,
@@ -20,6 +25,7 @@ import {
   type GPUSelfTestSummary,
   type GPUSearchRequest,
   type GPUSearchSummary,
+  type GPUTransferMetrics,
   type RawGPUCandidate,
   type RpnForm,
   type SearchStopReason,
@@ -47,16 +53,46 @@ interface GPUResources {
   readonly candidateCapacity: number;
   readonly groupCapacity: number;
   readonly dataCapacity: number;
+  readonly reducedCapacity: number;
   readonly params: GPUBuffer;
   readonly form: GPUBuffer;
   readonly candidates: GPUBuffer;
   readonly state: GPUBuffer;
   readonly groupBest: GPUBuffer;
   readonly dataPoints: GPUBuffer;
+  readonly reducedBest: GPUBuffer;
   readonly candidateReadback: GPUBuffer;
   readonly stateReadback: GPUBuffer;
-  readonly groupReadback: GPUBuffer;
+  readonly reducedReadback: GPUBuffer;
   readonly bindGroup: GPUBindGroup;
+  readonly reductionBindGroup: GPUBindGroup;
+  readonly footprint: GPUResourceFootprint;
+  dataUploadId: number | null;
+}
+
+export interface GPUResourceFootprint {
+  readonly storageBytes: number;
+  readonly readbackBytes: number;
+  readonly allocatedBytes: number;
+}
+
+interface MutableGPUTransferMetrics {
+  dispatches: number;
+  dataUploads: number;
+  candidateReadbacks: number;
+  cpuToGpuBytes: bigint;
+  gpuToCpuBytes: bigint;
+  peakStorageBytes: number;
+  peakReadbackBytes: number;
+  peakAllocatedBytes: number;
+}
+
+interface DispatchTransfer {
+  readonly cpuToGpuBytes: number;
+  readonly gpuToCpuBytes: number;
+  readonly dataUploaded: boolean;
+  readonly candidateReadback: boolean;
+  readonly footprint: GPUResourceFootprint;
 }
 
 interface DispatchResult {
@@ -71,17 +107,45 @@ interface TileContext {
   readonly calculator: CompiledCalculator;
   readonly functionPoints: readonly FunctionPoint[] | null;
   readonly multivariatePoints: readonly MultivariatePoint[] | null;
+  readonly packedData: Float32Array<ArrayBuffer> | null;
+  readonly dataUploadId: number;
   readonly candidateCapacity: number;
   readonly groupBestToVerify: number;
   readonly signal?: AbortSignal;
   readonly deadline: number;
   onDispatch: (count: number, depth: number) => void;
   onOverflow: () => void;
+  onTransfer: (transfer: DispatchTransfer) => void;
   onCandidates: (
     form: RpnForm,
     tileStart: bigint,
     candidates: readonly RawGPUCandidate[],
   ) => void;
+}
+
+export function estimateGPUResourceFootprint(
+  candidateCapacity: number,
+  groupCapacity: number,
+  dataCapacity: number,
+  reducedCapacity: number,
+): GPUResourceFootprint {
+  const candidateBytes = candidateCapacity * RESULT_BYTES;
+  const groupBytes = groupCapacity * RESULT_BYTES;
+  const dataBytes = dataCapacity * DATA_POINT_BYTES;
+  const reducedBytes = reducedCapacity * RESULT_BYTES;
+  const storageBytes = PARAM_BYTES + FORM_BYTES + candidateBytes + STATE_BYTES +
+    groupBytes + dataBytes + reducedBytes;
+  const readbackBytes = candidateBytes + STATE_BYTES + reducedBytes;
+  return {
+    storageBytes,
+    readbackBytes,
+    allocatedBytes: storageBytes + readbackBytes,
+  };
+}
+
+function nextPowerOfTwo(value: number): number {
+  if (value <= 1) return 1;
+  return 2 ** Math.ceil(Math.log2(value));
 }
 
 class StopSearch extends Error {
@@ -216,6 +280,36 @@ export function assertGPUOverflowRecoveryEvidence(
   }
 }
 
+interface ScientificParityExpectation {
+  readonly tokens: readonly CalculatorToken[];
+  readonly relativeTolerance?: number;
+}
+
+function assertScientificParityResults(
+  summary: GPUSearchSummary,
+  expectations: readonly ScientificParityExpectation[],
+): number {
+  for (const expectation of expectations) {
+    const rpn = expectation.tokens.join(', ');
+    const result = summary.results.find(candidate => candidate.rpn === rpn);
+    const expected = evaluateCoreRPN(expectation.tokens);
+    const tolerance = expectation.relativeTolerance ?? 5e-3;
+    const scale = Math.max(1, Math.abs(expected));
+    if (
+      !result ||
+      !Number.isFinite(expected) ||
+      Math.abs(result.value - expected) > 64 * Number.EPSILON * scale ||
+      Math.abs(result.gpuValue - expected) > tolerance * scale
+    ) {
+      throw new Error(
+        `GPU/CPU parity failed for ${rpn} ` +
+        `(expected=${expected}, cpu=${result?.value ?? 'missing'}, gpu=${result?.gpuValue ?? 'missing'}).`,
+      );
+    }
+  }
+  return expectations.length;
+}
+
 /**
  * Browser WebGPU engine for Constant Recognition.
  *
@@ -226,11 +320,13 @@ export class WebGPUConstantRecognizer {
   private resources: GPUResources | null = null;
   private running = false;
   private destroyed = false;
+  private dataUploadGeneration = 0;
   private infoState: GPURecognizerInfo;
 
   private constructor(
     private readonly device: GPUDevice,
     private readonly pipeline: GPUComputePipeline,
+    private readonly reductionPipeline: GPUComputePipeline,
     info: GPURecognizerInfo,
     onDeviceLost?: (info: GPUDeviceLostInfo) => void,
   ) {
@@ -340,6 +436,13 @@ export class WebGPUConstantRecognizer {
       // the still-active validation scope.
       failAndDestroy(stageError('GPU pipeline creation failed', error)),
     );
+    const reductionPipeline = await device.createComputePipelineAsync({
+      label: 'Constant Recognition best-candidate reduction pipeline',
+      layout: 'auto',
+      compute: { module: shaderModule, entryPoint: 'reduce_group_best' },
+    }).catch((error: unknown) =>
+      failAndDestroy(stageError('GPU reduction pipeline creation failed', error)),
+    );
     const pipelineValidationError = await device.popErrorScope().catch((error: unknown) =>
       failAndDestroy(stageError('GPU pipeline validation failed', error)),
     );
@@ -352,11 +455,12 @@ export class WebGPUConstantRecognizer {
     const adapterInfo = adapter.info;
     const adapterName = adapterInfo.description || adapterInfo.device || adapterInfo.vendor || 'WebGPU adapter';
 
-    const recognizer = new WebGPUConstantRecognizer(device, pipeline, {
+    const recognizer = new WebGPUConstantRecognizer(device, pipeline, reductionPipeline, {
       supported: true,
       adapterName,
       selfTestPassed: false,
       overflowRecoveryPassed: false,
+      scientificParityPassed: false,
       selfTestElapsedMs: 0,
       workgroupSize: WORKGROUP_SIZE,
       maxWorkgroupsPerDimension: Number(device.limits.maxComputeWorkgroupsPerDimension),
@@ -387,12 +491,7 @@ export class WebGPUConstantRecognizer {
     this.device.destroy();
   }
 
-  /**
-   * Exercise the production search pipeline with one known expression (PI),
-   * then deliberately overflow a one-slot candidate buffer. Readiness is
-   * reported only when dispatch/readback, CPU verification and lossless tile
-   * splitting all succeed on the selected adapter.
-   */
+  /** Exercise every calculator opcode kind, both data modes, readback and overflow recovery. */
   async runSelfTest(): Promise<GPUSelfTestSummary> {
     if (this.destroyed) throw new Error('The WebGPU recognizer has been destroyed.');
 
@@ -400,6 +499,12 @@ export class WebGPUConstantRecognizer {
     this.device.pushErrorScope('validation');
     let summary: GPUSearchSummary | null = null;
     let overflowSummary: GPUSearchSummary | null = null;
+    let unarySummary: GPUSearchSummary | null = null;
+    let atanhSummary: GPUSearchSummary | null = null;
+    let binarySummary: GPUSearchSummary | null = null;
+    let reductionSummary: GPUSearchSummary | null = null;
+    let functionSummary: GPUSearchSummary | null = null;
+    let multivariateSummary: GPUSearchSummary | null = null;
     let operationError: unknown = null;
     try {
       summary = await this.search({
@@ -436,6 +541,112 @@ export class WebGPUConstantRecognizer {
         maxDurationMs: SELF_TEST_TIMEOUT_MS,
         stopAfterFirstAcceptedK: false,
       });
+
+      // One dense tile covers every constant/unary pairing. Chosen reference
+      // expressions exercise all 18 unary opcodes on valid real-domain inputs.
+      unarySummary = await this.search({
+        target: 1,
+        minK: 2,
+        maxK: 2,
+        calculator: { consts: [...CALC4_CONSTANTS], funcs: [...CALC4_UNARY], ops: [] },
+        screeningRelativeError: 1e30,
+        topN: CALC4_CONSTANTS.length * CALC4_UNARY.length,
+        candidateCapacity: CALC4_CONSTANTS.length * CALC4_UNARY.length,
+        tileInvocations: CALC4_CONSTANTS.length * CALC4_UNARY.length,
+        groupBestToVerify: 0,
+        maxEvaluations: BigInt(CALC4_CONSTANTS.length * CALC4_UNARY.length),
+        maxDurationMs: SELF_TEST_TIMEOUT_MS,
+        stopAfterFirstAcceptedK: false,
+      });
+
+      // ARCTANH needs an input strictly inside (-1, 1), produced here as 1/2.
+      atanhSummary = await this.search({
+        target: 1,
+        minK: 3,
+        maxK: 3,
+        calculator: { consts: ['TWO'], funcs: ['INV', 'ARCTANH'], ops: [] },
+        screeningRelativeError: 1e30,
+        topN: 4,
+        candidateCapacity: 4,
+        tileInvocations: 4,
+        groupBestToVerify: 0,
+        maxEvaluations: BigInt(4),
+        maxDurationMs: SELF_TEST_TIMEOUT_MS,
+        stopAfterFirstAcceptedK: false,
+      });
+
+      binarySummary = await this.search({
+        target: 1,
+        minK: 3,
+        maxK: 3,
+        calculator: { consts: [...CALC4_CONSTANTS], funcs: [], ops: [...CALC4_BINARY] },
+        screeningRelativeError: 1e30,
+        topN: CALC4_CONSTANTS.length ** 2 * CALC4_BINARY.length,
+        candidateCapacity: CALC4_CONSTANTS.length ** 2 * CALC4_BINARY.length,
+        tileInvocations: CALC4_CONSTANTS.length ** 2 * CALC4_BINARY.length,
+        groupBestToVerify: 0,
+        maxEvaluations: BigInt(CALC4_CONSTANTS.length ** 2 * CALC4_BINARY.length),
+        maxDurationMs: SELF_TEST_TIMEOUT_MS,
+        stopAfterFirstAcceptedK: false,
+      });
+
+      // Four workgroups with no threshold hit prove that the second pipeline
+      // returns every globally reduced workgroup winner, not just group zero.
+      reductionSummary = await this.search({
+        target: 123_456.789,
+        minK: 3,
+        maxK: 3,
+        calculator: { consts: [...CALC4_CONSTANTS], funcs: [], ops: [...CALC4_BINARY] },
+        screeningRelativeError: 1e-12,
+        topN: 4,
+        candidateCapacity: 8,
+        tileInvocations: CALC4_CONSTANTS.length ** 2 * CALC4_BINARY.length,
+        groupBestToVerify: 4,
+        maxEvaluations: BigInt(CALC4_CONSTANTS.length ** 2 * CALC4_BINARY.length),
+        maxDurationMs: SELF_TEST_TIMEOUT_MS,
+        stopAfterFirstAcceptedK: false,
+      });
+
+      functionSummary = await this.search({
+        target: 0,
+        minK: 2,
+        maxK: 2,
+        calculator: { consts: [], funcs: ['SQR', 'INV'], ops: [] },
+        functionPoints: [
+          { x: -2, y: 4, dy: 0 },
+          { x: -1, y: 1, dy: 0.25 },
+          { x: 1, y: 1, dy: 0 },
+          { x: 2, y: 4, dy: 0 },
+        ],
+        functionErrorTolerance: 1e-12,
+        topN: 2,
+        candidateCapacity: 2,
+        tileInvocations: 1,
+        groupBestToVerify: 1,
+        maxEvaluations: BigInt(2),
+        maxDurationMs: SELF_TEST_TIMEOUT_MS,
+        stopAfterFirstAcceptedK: false,
+      });
+
+      multivariateSummary = await this.search({
+        target: 0,
+        minK: 3,
+        maxK: 3,
+        calculator: { consts: [], funcs: [], ops: ['PLUS'] },
+        multivariatePoints: [
+          { c1: 1, c2: 2, y: 3, dy: 0 },
+          { c1: -4, c2: 7, y: 3, dy: 0.5 },
+          { c1: 8, c2: 5, y: 13, dy: 0 },
+        ],
+        functionErrorTolerance: 1e-12,
+        topN: 4,
+        candidateCapacity: 4,
+        tileInvocations: 4,
+        groupBestToVerify: 1,
+        maxEvaluations: BigInt(4),
+        maxDurationMs: SELF_TEST_TIMEOUT_MS,
+        stopAfterFirstAcceptedK: true,
+      });
       await this.device.queue.onSubmittedWorkDone();
     } catch (error) {
       operationError = error;
@@ -452,15 +663,100 @@ export class WebGPUConstantRecognizer {
     if (validationError) throw new Error(validationError.message);
     if (!summary) throw new Error('The self-test returned no summary.');
     if (!overflowSummary) throw new Error('The overflow self-test returned no summary.');
+    if (!unarySummary || !atanhSummary || !binarySummary || !reductionSummary) {
+      throw new Error('The arithmetic parity self-test returned no summary.');
+    }
+    if (!functionSummary || !multivariateSummary) {
+      throw new Error('The scientific data-mode self-test returned no summary.');
+    }
 
     const resultValue = assertGPUSelfTestEvidence(summary);
     assertGPUOverflowRecoveryEvidence(overflowSummary);
+    let parityCases = 0;
+    parityCases += assertScientificParityResults(overflowSummary, CALC4_CONSTANTS.map(token => ({
+      tokens: [token],
+      relativeTolerance: 1e-5,
+    })));
+    parityCases += assertScientificParityResults(unarySummary, [
+      { tokens: ['TWO', 'LOG'] },
+      { tokens: ['TWO', 'EXP'] },
+      { tokens: ['TWO', 'INV'] },
+      { tokens: ['FIVE', 'GAMMA'], relativeTolerance: 1e-2 },
+      { tokens: ['FOUR', 'SQRT'] },
+      { tokens: ['THREE', 'SQR'] },
+      { tokens: ['ONE', 'SIN'] },
+      { tokens: ['ONE', 'ARCSIN'] },
+      { tokens: ['ONE', 'COS'] },
+      { tokens: ['ONE', 'ARCCOS'] },
+      { tokens: ['ONE', 'TAN'] },
+      { tokens: ['ONE', 'ARCTAN'] },
+      { tokens: ['ONE', 'SINH'] },
+      { tokens: ['ONE', 'ARCSINH'] },
+      { tokens: ['ONE', 'COSH'] },
+      { tokens: ['TWO', 'ARCCOSH'] },
+      { tokens: ['ONE', 'TANH'] },
+    ]);
+    parityCases += assertScientificParityResults(atanhSummary, [
+      { tokens: ['TWO', 'INV', 'ARCTANH'] },
+    ]);
+    parityCases += assertScientificParityResults(binarySummary, [
+      { tokens: ['ONE', 'TWO', 'PLUS'] },
+      { tokens: ['TWO', 'THREE', 'TIMES'] },
+      { tokens: ['TWO', 'THREE', 'SUBTRACT'] },
+      { tokens: ['TWO', 'FOUR', 'DIVIDE'] },
+      { tokens: ['TWO', 'THREE', 'POWER'] },
+    ]);
+
+    const reducedGroups = new Set(reductionSummary.results.map(result =>
+      Number(result.combinationIndex / BigInt(WORKGROUP_SIZE))
+    ));
+    if (
+      reductionSummary.uniqueEvaluations !== BigInt(845) ||
+      reductionSummary.results.length !== 4 ||
+      reductionSummary.results.some(result => result.source !== 'group-best') ||
+      reducedGroups.size !== 4 ||
+      reductionSummary.transfers.dispatches !== 1 ||
+      reductionSummary.transfers.gpuToCpuBytes !== BigInt(80) ||
+      reductionSummary.transfers.dataUploads !== 0 ||
+      reductionSummary.transfers.candidateReadbacks !== 0
+    ) {
+      throw new Error(
+        `GPU reduction/transfer self-test failed ` +
+        `(results=${reductionSummary.results.length}, groups=${reducedGroups.size}, ` +
+        `readback=${reductionSummary.transfers.gpuToCpuBytes.toString()} bytes).`,
+      );
+    }
+    parityCases += 1;
+
+    const functionResult = functionSummary.results.find(result =>
+      result.rpn === 'x, SQR' && result.accepted && result.relativeError === 0,
+    );
+    const multivariateResult = multivariateSummary.results.find(result =>
+      (result.rpn === 'C1, C2, PLUS' || result.rpn === 'C2, C1, PLUS') &&
+      result.accepted && result.relativeError === 0,
+    );
+    const expectedFunctionUploadBytes = BigInt(2 * (PARAM_BYTES + FORM_BYTES + STATE_BYTES) + 4 * DATA_POINT_BYTES);
+    if (
+      !functionResult ||
+      functionSummary.transfers.dispatches !== 2 ||
+      functionSummary.transfers.dataUploads !== 1 ||
+      functionSummary.transfers.cpuToGpuBytes !== expectedFunctionUploadBytes ||
+      !multivariateResult
+    ) {
+      throw new Error(
+        `Scientific GPU modes failed (f(x)=${functionResult ? 'ok' : 'missing'}, ` +
+        `data uploads=${functionSummary.transfers.dataUploads}, ` +
+        `F(C1,C2)=${multivariateResult ? 'ok' : 'missing'}).`,
+      );
+    }
+    parityCases += 2;
     const elapsedMs = nowMs() - selfTestStarted;
 
     this.infoState = {
       ...this.infoState,
       selfTestPassed: true,
       overflowRecoveryPassed: true,
+      scientificParityPassed: true,
       selfTestElapsedMs: elapsedMs,
     };
 
@@ -471,6 +767,7 @@ export class WebGPUConstantRecognizer {
       overflowRecoveryDispatchedEvaluations: overflowSummary.dispatchedEvaluations,
       overflowRetries: overflowSummary.overflowRetries,
       resultValue,
+      parityCases,
     };
   }
 
@@ -498,9 +795,12 @@ export class WebGPUConstantRecognizer {
         if (![point.x, point.y, point.dy].every(Number.isFinite) || point.dy < 0) {
           throw new RangeError('Function data must be finite and dy must be non-negative.');
         }
-        const pointF32 = [point.x, point.y, point.dy].map(Math.fround);
-        if (!pointF32.every(Number.isFinite)) {
-          throw new RangeError('Function data must be representable in FP32 for GPU screening.');
+        const values = [point.x, point.y, point.dy];
+        const pointF32 = values.map(Math.fround);
+        if (!pointF32.every(Number.isFinite) || values.some((value, index) =>
+          value !== 0 && pointF32[index] === 0
+        )) {
+          throw new RangeError('Function data must remain finite and non-zero when represented in FP32.');
         }
       }
     }
@@ -513,9 +813,12 @@ export class WebGPUConstantRecognizer {
         if (![point.c1, point.c2, point.y, point.dy].every(Number.isFinite) || point.dy < 0) {
           throw new RangeError('Two-variable data must be finite and dy must be non-negative.');
         }
-        const pointF32 = [point.c1, point.c2, point.y, point.dy].map(Math.fround);
-        if (!pointF32.every(Number.isFinite)) {
-          throw new RangeError('Two-variable data must be representable in FP32 for GPU screening.');
+        const values = [point.c1, point.c2, point.y, point.dy];
+        const pointF32 = values.map(Math.fround);
+        if (!pointF32.every(Number.isFinite) || values.some((value, index) =>
+          value !== 0 && pointF32[index] === 0
+        )) {
+          throw new RangeError('Two-variable data must remain finite and non-zero when represented in FP32.');
         }
       }
     }
@@ -555,6 +858,11 @@ export class WebGPUConstantRecognizer {
     const requestedGroupBest = request.groupBestToVerify ?? DEFAULT_GROUP_BEST_TO_VERIFY;
     if (!Number.isSafeInteger(requestedGroupBest) || requestedGroupBest < 0) {
       throw new RangeError('groupBestToVerify must be a non-negative safe integer.');
+    }
+    if (requestedGroupBest > MAX_GROUP_BEST_TO_VERIFY) {
+      throw new RangeError(
+        `groupBestToVerify cannot exceed the GPU reduction limit of ${MAX_GROUP_BEST_TO_VERIFY}.`,
+      );
     }
     const groupBestToVerify = requestedGroupBest;
     const topN = validatePositiveInteger(request.topN ?? DEFAULT_TOP_N, 'topN');
@@ -619,6 +927,16 @@ export class WebGPUConstantRecognizer {
     let stopReason: SearchStopReason = 'completed';
     let verifiedCandidates = 0;
     let overflowRetries = 0;
+    const transferMetrics: MutableGPUTransferMetrics = {
+      dispatches: 0,
+      dataUploads: 0,
+      candidateReadbacks: 0,
+      cpuToGpuBytes: BigInt(0),
+      gpuToCpuBytes: BigInt(0),
+      peakStorageBytes: 0,
+      peakReadbackBytes: 0,
+      peakAllocatedBytes: 0,
+    };
 
     const keepResult = (result: VerifiedGPUResult): void => {
       results.push(result);
@@ -702,16 +1020,39 @@ export class WebGPUConstantRecognizer {
       calculator,
       functionPoints,
       multivariatePoints,
+      packedData: functionPoints || multivariatePoints
+        ? this.packFunctionData(functionPoints, multivariatePoints)
+        : null,
+      dataUploadId: ++this.dataUploadGeneration,
       candidateCapacity,
       groupBestToVerify,
       signal: request.signal,
       deadline,
       onDispatch: (count, depth) => {
+        transferMetrics.dispatches++;
         dispatchedEvaluations += BigInt(count);
         if (depth === 0) uniqueEvaluations += BigInt(count);
       },
       onOverflow: () => {
         overflowRetries++;
+      },
+      onTransfer: (transfer) => {
+        transferMetrics.cpuToGpuBytes += BigInt(transfer.cpuToGpuBytes);
+        transferMetrics.gpuToCpuBytes += BigInt(transfer.gpuToCpuBytes);
+        transferMetrics.dataUploads += transfer.dataUploaded ? 1 : 0;
+        transferMetrics.candidateReadbacks += transfer.candidateReadback ? 1 : 0;
+        transferMetrics.peakStorageBytes = Math.max(
+          transferMetrics.peakStorageBytes,
+          transfer.footprint.storageBytes,
+        );
+        transferMetrics.peakReadbackBytes = Math.max(
+          transferMetrics.peakReadbackBytes,
+          transfer.footprint.readbackBytes,
+        );
+        transferMetrics.peakAllocatedBytes = Math.max(
+          transferMetrics.peakAllocatedBytes,
+          transfer.footprint.allocatedBytes,
+        );
       },
       onCandidates: verifyCandidates,
     };
@@ -800,6 +1141,9 @@ export class WebGPUConstantRecognizer {
       elapsedMs: nowMs() - started,
       completedThroughK,
       overflowRetries,
+      transfers: {
+        ...transferMetrics,
+      } satisfies GPUTransferMetrics,
     };
   }
 
@@ -867,7 +1211,14 @@ export class WebGPUConstantRecognizer {
       context.functionPoints?.length ?? context.multivariatePoints?.length ?? 1,
       1,
     );
-    const resources = this.ensureResources(context.candidateCapacity, workgroupCount, dataCapacity);
+    const bestCount = Math.min(context.groupBestToVerify, workgroupCount);
+    const groupCapacity = bestCount > 0 ? workgroupCount : 1;
+    const resources = this.ensureResources(
+      context.candidateCapacity,
+      groupCapacity,
+      dataCapacity,
+      Math.max(bestCount, 1),
+    );
     const formWords = this.packFormData(form, context.calculator, tileStart);
     const params = this.packParams(
       context.targetF32,
@@ -879,20 +1230,18 @@ export class WebGPUConstantRecognizer {
       context.calculator,
       context.functionPoints,
       context.multivariatePoints,
+      bestCount,
     );
 
     this.device.queue.writeBuffer(resources.params, 0, params);
     this.device.queue.writeBuffer(resources.form, 0, formWords);
     this.device.queue.writeBuffer(resources.state, 0, new Uint32Array(4));
-    this.device.queue.writeBuffer(
-      resources.dataPoints,
-      0,
-      this.packFunctionData(
-        context.functionPoints,
-        context.multivariatePoints,
-        context.targetF32,
-      ),
-    );
+    let dataUploaded = false;
+    if (context.packedData && resources.dataUploadId !== context.dataUploadId) {
+      this.device.queue.writeBuffer(resources.dataPoints, 0, context.packedData);
+      resources.dataUploadId = context.dataUploadId;
+      dataUploaded = true;
+    }
 
     const encoder = this.device.createCommandEncoder({ label: 'Constant Recognition tile' });
     const pass = encoder.beginComputePass({ label: 'FP32 candidate screening' });
@@ -900,26 +1249,46 @@ export class WebGPUConstantRecognizer {
     pass.setBindGroup(0, resources.bindGroup);
     pass.dispatchWorkgroups(workgroupCount);
     pass.end();
+    if (bestCount > 0) {
+      const reductionPass = encoder.beginComputePass({ label: 'Reduce workgroup candidates' });
+      reductionPass.setPipeline(this.reductionPipeline);
+      reductionPass.setBindGroup(0, resources.reductionBindGroup);
+      reductionPass.dispatchWorkgroups(1);
+      reductionPass.end();
+    }
     encoder.copyBufferToBuffer(resources.state, 0, resources.stateReadback, 0, STATE_BYTES);
-    encoder.copyBufferToBuffer(
-      resources.groupBest,
-      0,
-      resources.groupReadback,
-      0,
-      workgroupCount * RESULT_BYTES,
-    );
+    if (bestCount > 0) {
+      encoder.copyBufferToBuffer(
+        resources.reducedBest,
+        0,
+        resources.reducedReadback,
+        0,
+        bestCount * RESULT_BYTES,
+      );
+    }
     this.device.queue.submit([encoder.finish()]);
     context.onDispatch(batchCount, depth);
+    context.onTransfer({
+      cpuToGpuBytes: PARAM_BYTES + FORM_BYTES + STATE_BYTES +
+        (dataUploaded ? context.packedData?.byteLength ?? 0 : 0),
+      gpuToCpuBytes: STATE_BYTES + bestCount * RESULT_BYTES,
+      dataUploaded,
+      candidateReadback: false,
+      footprint: resources.footprint,
+    });
 
     let stateMapped = false;
-    let groupMapped = false;
+    let reducedMapped = false;
     try {
-      await Promise.all([
+      const mappings: Promise<void>[] = [
         resources.stateReadback.mapAsync(GPUMapMode.READ, 0, STATE_BYTES).then(() => { stateMapped = true; }),
-        resources.groupReadback
-          .mapAsync(GPUMapMode.READ, 0, workgroupCount * RESULT_BYTES)
-          .then(() => { groupMapped = true; }),
-      ]);
+      ];
+      if (bestCount > 0) {
+        mappings.push(resources.reducedReadback
+          .mapAsync(GPUMapMode.READ, 0, bestCount * RESULT_BYTES)
+          .then(() => { reducedMapped = true; }));
+      }
+      await Promise.all(mappings);
       throwIfAborted(context.signal);
 
       const stateView = new DataView(resources.stateReadback.getMappedRange(0, STATE_BYTES));
@@ -927,12 +1296,14 @@ export class WebGPUConstantRecognizer {
       const overflowFlag = stateView.getUint32(4, true);
       const overflow = overflowFlag !== 0 || candidateCount > context.candidateCapacity;
 
-      const groupBest = this.parseCandidates(
-        resources.groupReadback.getMappedRange(0, workgroupCount * RESULT_BYTES),
-        workgroupCount,
-        batchCount,
-        'group-best',
-      );
+      const groupBest = bestCount > 0
+        ? this.parseCandidates(
+            resources.reducedReadback.getMappedRange(0, bestCount * RESULT_BYTES),
+            bestCount,
+            batchCount,
+            'group-best',
+          )
+        : [];
 
       if (overflow) {
         return { overflow: true, thresholdCandidates: [], groupBest: [] };
@@ -948,9 +1319,9 @@ export class WebGPUConstantRecognizer {
         resources.stateReadback.unmap();
         stateMapped = false;
       }
-      if (groupMapped) {
-        resources.groupReadback.unmap();
-        groupMapped = false;
+      if (reducedMapped) {
+        resources.reducedReadback.unmap();
+        reducedMapped = false;
       }
 
       const resultBytes = candidateCount * RESULT_BYTES;
@@ -963,6 +1334,13 @@ export class WebGPUConstantRecognizer {
         resultBytes,
       );
       this.device.queue.submit([resultEncoder.finish()]);
+      context.onTransfer({
+        cpuToGpuBytes: 0,
+        gpuToCpuBytes: resultBytes,
+        dataUploaded: false,
+        candidateReadback: true,
+        footprint: resources.footprint,
+      });
       await resources.candidateReadback.mapAsync(GPUMapMode.READ, 0, resultBytes);
       try {
         throwIfAborted(context.signal);
@@ -978,7 +1356,7 @@ export class WebGPUConstantRecognizer {
       }
     } finally {
       if (stateMapped) resources.stateReadback.unmap();
-      if (groupMapped) resources.groupReadback.unmap();
+      if (reducedMapped) resources.reducedReadback.unmap();
     }
   }
 
@@ -1020,6 +1398,7 @@ export class WebGPUConstantRecognizer {
     calculator: CompiledCalculator,
     functionPoints: readonly FunctionPoint[] | null,
     multivariatePoints: readonly MultivariatePoint[] | null,
+    groupBestCount: number,
   ): ArrayBuffer {
     const buffer = new ArrayBuffer(PARAM_BYTES);
     const floatView = new Float32Array(buffer, 0, 4);
@@ -1040,16 +1419,15 @@ export class WebGPUConstantRecognizer {
     const searchView = new Uint32Array(buffer, 48, 4);
     const mode = functionPoints ? 1 : multivariatePoints ? 2 : 0;
     const pointCount = functionPoints?.length ?? multivariatePoints?.length ?? 1;
-    searchView.set([mode, pointCount, 0, 0]);
+    searchView.set([mode, pointCount, groupBestCount, groupBestCount > 0 ? 1 : 0]);
     return buffer;
   }
 
   private packFunctionData(
     functionPoints: readonly FunctionPoint[] | null,
     multivariatePoints: readonly MultivariatePoint[] | null,
-    targetF32: number,
   ): Float32Array<ArrayBuffer> {
-    const count = functionPoints?.length ?? multivariatePoints?.length ?? 1;
+    const count = functionPoints?.length ?? multivariatePoints?.length ?? 0;
     const packed = new Float32Array(count * 4);
     for (let index = 0; index < count; index++) {
       const offset = index * 4;
@@ -1062,8 +1440,6 @@ export class WebGPUConstantRecognizer {
         packed[offset] = Math.fround(functionPoints[index].x);
         packed[offset + 2] = Math.fround(functionPoints[index].y);
         packed[offset + 3] = Math.fround(functionPoints[index].dy);
-      } else {
-        packed[offset + 2] = targetF32;
       }
     }
     return packed;
@@ -1090,25 +1466,43 @@ export class WebGPUConstantRecognizer {
     candidateCapacity: number,
     groupCapacity: number,
     dataCapacity: number,
+    reducedCapacity: number,
   ): GPUResources {
     const existing = this.resources;
     if (
       existing &&
       existing.candidateCapacity >= candidateCapacity &&
       existing.groupCapacity >= groupCapacity &&
-      existing.dataCapacity >= dataCapacity
+      existing.dataCapacity >= dataCapacity &&
+      existing.reducedCapacity >= reducedCapacity
     ) {
       return existing;
     }
 
-    this.destroyResources();
-    const candidateBytes = candidateCapacity * RESULT_BYTES;
-    const groupBytes = groupCapacity * RESULT_BYTES;
-    const dataBytes = dataCapacity * DATA_POINT_BYTES;
     const storageLimit = Math.min(
       this.info.maxStorageBufferBindingSize,
       this.info.maxBufferSize,
     );
+    const growCapacity = (requested: number, bytesPerElement: number): number => Math.min(
+      nextPowerOfTwo(requested),
+      Math.floor(storageLimit / bytesPerElement),
+    );
+    const allocatedCandidateCapacity = growCapacity(candidateCapacity, RESULT_BYTES);
+    const allocatedGroupCapacity = growCapacity(groupCapacity, RESULT_BYTES);
+    const allocatedDataCapacity = growCapacity(dataCapacity, DATA_POINT_BYTES);
+    const allocatedReducedCapacity = growCapacity(reducedCapacity, RESULT_BYTES);
+    if (
+      allocatedCandidateCapacity < candidateCapacity ||
+      allocatedGroupCapacity < groupCapacity ||
+      allocatedDataCapacity < dataCapacity ||
+      allocatedReducedCapacity < reducedCapacity
+    ) {
+      throw new RangeError('Requested GPU buffers exceed the adapter storage-buffer limit.');
+    }
+    const candidateBytes = allocatedCandidateCapacity * RESULT_BYTES;
+    const groupBytes = allocatedGroupCapacity * RESULT_BYTES;
+    const dataBytes = allocatedDataCapacity * DATA_POINT_BYTES;
+    const reducedBytes = allocatedReducedCapacity * RESULT_BYTES;
     if (!Number.isSafeInteger(candidateBytes) || candidateBytes > storageLimit) {
       throw new RangeError('Candidate buffer exceeds the adapter storage-buffer limit.');
     }
@@ -1118,6 +1512,11 @@ export class WebGPUConstantRecognizer {
     if (!Number.isSafeInteger(dataBytes) || dataBytes > storageLimit) {
       throw new RangeError('Function data buffer exceeds the adapter storage-buffer limit.');
     }
+    if (!Number.isSafeInteger(reducedBytes) || reducedBytes > storageLimit) {
+      throw new RangeError('Reduced-best buffer exceeds the adapter storage-buffer limit.');
+    }
+
+    this.destroyResources();
 
     const params = this.device.createBuffer({
       label: 'CR params',
@@ -1149,6 +1548,11 @@ export class WebGPUConstantRecognizer {
       size: dataBytes,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
+    const reducedBest = this.device.createBuffer({
+      label: 'CR globally reduced best candidates',
+      size: reducedBytes,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
     const candidateReadback = this.device.createBuffer({
       label: 'CR candidate readback',
       size: candidateBytes,
@@ -1159,9 +1563,9 @@ export class WebGPUConstantRecognizer {
       size: STATE_BYTES,
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
-    const groupReadback = this.device.createBuffer({
-      label: 'CR group readback',
-      size: groupBytes,
+    const reducedReadback = this.device.createBuffer({
+      label: 'CR reduced-best readback',
+      size: reducedBytes,
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
 
@@ -1177,21 +1581,41 @@ export class WebGPUConstantRecognizer {
         { binding: 5, resource: { buffer: dataPoints } },
       ],
     });
+    const reductionBindGroup = this.device.createBindGroup({
+      label: 'CR best-candidate reduction bind group',
+      layout: this.reductionPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: params } },
+        { binding: 4, resource: { buffer: groupBest } },
+        { binding: 6, resource: { buffer: reducedBest } },
+      ],
+    });
+    const footprint = estimateGPUResourceFootprint(
+      allocatedCandidateCapacity,
+      allocatedGroupCapacity,
+      allocatedDataCapacity,
+      allocatedReducedCapacity,
+    );
 
     this.resources = {
-      candidateCapacity,
-      groupCapacity,
-      dataCapacity,
+      candidateCapacity: allocatedCandidateCapacity,
+      groupCapacity: allocatedGroupCapacity,
+      dataCapacity: allocatedDataCapacity,
+      reducedCapacity: allocatedReducedCapacity,
       params,
       form,
       candidates,
       state,
       groupBest,
       dataPoints,
+      reducedBest,
       candidateReadback,
       stateReadback,
-      groupReadback,
+      reducedReadback,
       bindGroup,
+      reductionBindGroup,
+      footprint,
+      dataUploadId: null,
     };
     return this.resources;
   }
@@ -1205,9 +1629,10 @@ export class WebGPUConstantRecognizer {
     resources.state.destroy();
     resources.groupBest.destroy();
     resources.dataPoints.destroy();
+    resources.reducedBest.destroy();
     resources.candidateReadback.destroy();
     resources.stateReadback.destroy();
-    resources.groupReadback.destroy();
+    resources.reducedReadback.destroy();
     this.resources = null;
   }
 }

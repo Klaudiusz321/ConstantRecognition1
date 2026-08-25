@@ -3,6 +3,7 @@
 
 const MAX_K: u32 = 16u;
 const MAX_OPS: u32 = 32u;
+const MAX_REDUCED_BEST: u32 = 64u;
 const WORKGROUP_SIZE: u32 = 256u;
 const MAX_F32: f32 = 3.402823466e38;
 const PI_F32: f32 = 3.14159265358979323846;
@@ -15,7 +16,7 @@ struct Params {
     sizes: vec4<u32>,
     // x = terminal count, y = unary count, z = binary count, w = constant count
     counts: vec4<u32>,
-    // x = mode (0 constant, 1 f(x), 2 F(C1,C2)), y = data-point count
+    // x = mode, y = point count, z = reduced-best count, w = emit group best
     search: vec4<u32>,
 }
 
@@ -61,6 +62,7 @@ struct DataPointBuffer {
 @group(0) @binding(3) var<storage, read_write> state: SearchState;
 @group(0) @binding(4) var<storage, read_write> group_best: CandidateBuffer;
 @group(0) @binding(5) var<storage, read> data_points: DataPointBuffer;
+@group(0) @binding(6) var<storage, read_write> reduced_best: CandidateBuffer;
 
 var<workgroup> wg_error: array<f32, 256>;
 var<workgroup> wg_value: array<f32, 256>;
@@ -341,9 +343,65 @@ fn search(
         workgroupBarrier();
     }
 
-    if (local_id == 0u && workgroup_id.x < params.sizes.w) {
+    if (local_id == 0u && params.search.w != 0u && workgroup_id.x < params.sizes.w) {
         group_best.values[workgroup_id.x] = Candidate(
             wg_index[0], wg_error[0], wg_value[0], wg_valid[0]
         );
+    }
+}
+
+fn candidate_is_better(candidate: Candidate, current: Candidate) -> bool {
+    return candidate.flags == 1u && (
+        current.flags == 0u ||
+        candidate.relative_error < current.relative_error ||
+        (
+            candidate.relative_error == current.relative_error &&
+            candidate.local_index < current.local_index
+        )
+    );
+}
+
+// Collapse one best result per search workgroup to the small, globally best set
+// that the FP64 CPU verifier actually consumes. One invocation is intentional:
+// at the maximum normal tile this is only 4096 * 64 inexpensive comparisons,
+// while it avoids mapping and transferring the complete workgroup result array.
+@compute @workgroup_size(1)
+fn reduce_group_best() {
+    let requested = min(params.search.z, MAX_REDUCED_BEST);
+    var best: array<Candidate, 64>;
+
+    for (var rank = 0u; rank < requested; rank = rank + 1u) {
+        best[rank] = Candidate(0u, MAX_F32, 0.0, 0u);
+    }
+
+    for (var group_index = 0u; group_index < params.sizes.w; group_index = group_index + 1u) {
+        let candidate = group_best.values[group_index];
+        if (candidate.flags != 1u) {
+            continue;
+        }
+
+        var position = requested;
+        for (var rank = 0u; rank < requested; rank = rank + 1u) {
+            if (candidate_is_better(candidate, best[rank])) {
+                position = rank;
+                break;
+            }
+        }
+
+        if (position < requested) {
+            var reverse = requested;
+            loop {
+                if (reverse <= position + 1u) {
+                    break;
+                }
+                best[reverse - 1u] = best[reverse - 2u];
+                reverse = reverse - 1u;
+            }
+            best[position] = candidate;
+        }
+    }
+
+    for (var rank = 0u; rank < requested; rank = rank + 1u) {
+        reduced_best.values[rank] = best[rank];
     }
 }

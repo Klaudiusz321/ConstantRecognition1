@@ -3,6 +3,7 @@ import type { FunctionPoint, MultivariatePoint } from '../types';
 
 export const MAX_GPU_K = 16;
 export const MAX_OPS_PER_KIND = 32;
+export const MAX_GROUP_BEST_TO_VERIFY = 64;
 export const RESULT_WORDS = 4;
 export const RESULT_BYTES = RESULT_WORDS * 4;
 
@@ -27,6 +28,8 @@ export interface GPURecognizerInfo {
   readonly selfTestPassed: boolean;
   /** True only after a deliberately overflowing result tile was recovered. */
   readonly overflowRecoveryPassed: boolean;
+  /** True only after constants, every operator kind and both function modes pass. */
+  readonly scientificParityPassed: boolean;
   readonly selfTestElapsedMs: number;
   readonly workgroupSize: number;
   readonly maxWorkgroupsPerDimension: number;
@@ -42,6 +45,7 @@ export interface GPUSelfTestSummary {
   readonly overflowRecoveryDispatchedEvaluations: bigint;
   readonly overflowRetries: number;
   readonly resultValue: number;
+  readonly parityCases: number;
 }
 
 export type SearchStopReason =
@@ -129,6 +133,19 @@ export interface GPUSearchSummary {
   readonly completedThroughK: number;
   /** Number of full candidate-buffer tiles that were safely split and rerun. */
   readonly overflowRetries: number;
+  readonly transfers: GPUTransferMetrics;
+}
+
+/** Measured host/device traffic and the largest persistent allocation in one search. */
+export interface GPUTransferMetrics {
+  readonly dispatches: number;
+  readonly dataUploads: number;
+  readonly candidateReadbacks: number;
+  readonly cpuToGpuBytes: bigint;
+  readonly gpuToCpuBytes: bigint;
+  readonly peakStorageBytes: number;
+  readonly peakReadbackBytes: number;
+  readonly peakAllocatedBytes: number;
 }
 
 export interface RawGPUCandidate {

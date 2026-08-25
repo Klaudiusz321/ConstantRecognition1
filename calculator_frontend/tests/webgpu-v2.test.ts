@@ -28,8 +28,12 @@ import {
 import {
   assertGPUOverflowRecoveryEvidence,
   assertGPUSelfTestEvidence,
+  estimateGPUResourceFootprint,
 } from '../app/calculator/lib/webgpu-v2/webgpu-engine';
-import { FormTokenKind } from '../app/calculator/lib/webgpu-v2/types';
+import {
+  FormTokenKind,
+  MAX_GROUP_BEST_TO_VERIFY,
+} from '../app/calculator/lib/webgpu-v2/types';
 import {
   functionMeanSquaredError,
   multivariateMeanSquaredError,
@@ -140,6 +144,20 @@ describe('CPU verifier matches the professor C core', () => {
   it('implements Gamma instead of treating it as the identity function', () => {
     expect(gamma(5)).toBeCloseTo(24, 12);
     expect(evaluateCoreRPN(['FIVE', 'GAMMA'])).toBeCloseTo(24, 12);
+  });
+
+  it('keeps every unary calculator opcode in the real domain for its reference case', () => {
+    const references = [
+      ['TWO', 'LOG'], ['TWO', 'EXP'], ['TWO', 'INV'], ['FIVE', 'GAMMA'],
+      ['FOUR', 'SQRT'], ['THREE', 'SQR'], ['ONE', 'SIN'], ['ONE', 'ARCSIN'],
+      ['ONE', 'COS'], ['ONE', 'ARCCOS'], ['ONE', 'TAN'], ['ONE', 'ARCTAN'],
+      ['ONE', 'SINH'], ['ONE', 'ARCSINH'], ['ONE', 'COSH'], ['TWO', 'ARCCOSH'],
+      ['ONE', 'TANH'], ['TWO', 'INV', 'ARCTANH'],
+    ] as const;
+    expect(references).toHaveLength(CALC4_UNARY.length);
+    for (const tokens of references) {
+      expect(Number.isFinite(evaluateCoreRPN(tokens))).toBe(true);
+    }
   });
 
   it('evaluates the variable x with the same RPN operand order', () => {
@@ -261,6 +279,10 @@ describe('WGSL regression guards', () => {
     new URL('../public/wasm/constant-recognition-v2.wgsl', import.meta.url),
     'utf8',
   );
+  const engine = readFileSync(
+    new URL('../app/calculator/lib/webgpu-v2/webgpu-engine.ts', import.meta.url),
+    'utf8',
+  );
 
   it('contains a real Gamma screening implementation', () => {
     expect(shader).toContain('fn gamma_lanczos');
@@ -284,6 +306,32 @@ describe('WGSL regression guards', () => {
     expect(shader).toContain('point.xy');
     expect(shader).toContain('params.search.y');
     expect(shader).toContain('total_error / f32(max(params.search.y, 1u))');
+  });
+
+  it('reduces workgroup winners on the GPU before the CPU readback', () => {
+    expect(MAX_GROUP_BEST_TO_VERIFY).toBe(64);
+    expect(shader).toContain('@compute @workgroup_size(1)');
+    expect(shader).toContain('fn reduce_group_best()');
+    expect(shader).toContain('reduced_best.values[rank] = best[rank]');
+    expect(engine).toContain("entryPoint: 'reduce_group_best'");
+    expect(engine).toContain('bestCount * RESULT_BYTES');
+    expect(engine).not.toContain('workgroupCount * RESULT_BYTES)\n          .mapAsync');
+  });
+
+  it('uploads function data only when the persistent buffer has stale contents', () => {
+    expect(engine).toContain('resources.dataUploadId !== context.dataUploadId');
+    expect(engine.match(/writeBuffer\(resources\.dataPoints/g)).toHaveLength(1);
+  });
+});
+
+describe('GPU memory accounting', () => {
+  it('accounts separately for storage and CPU-readable staging buffers', () => {
+    const footprint = estimateGPUResourceFootprint(8, 4, 3, 2);
+    expect(footprint).toEqual({
+      storageBytes: 928,
+      readbackBytes: 176,
+      allocatedBytes: 1_104,
+    });
   });
 });
 
