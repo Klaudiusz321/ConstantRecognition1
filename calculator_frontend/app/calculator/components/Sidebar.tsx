@@ -217,7 +217,7 @@ export function Sidebar({
             </div>
             {gpuChecked && gpuSupported && (
               <p className="text-[11px] leading-4 text-green-700 dark:text-green-300">
-                All calculator opcodes, data modes, reduction, readback and overflow recovery passed.
+                Opcodes, bounded buffers, reduction, readback and overflow recovery passed.
               </p>
             )}
             {gpuChecked && !gpuSupported && friendlyGPUError && (
@@ -509,7 +509,7 @@ export function Sidebar({
                   {gpuSupported && friendlyAdapterName ? (
                     <span>
                       Graphics processor: <strong className="font-medium text-gray-700 dark:text-gray-300">{friendlyAdapterName}</strong>.
-                      {' '}Opcode parity, data modes, GPU reduction, readback and forced overflow recovery passed.
+                      {' '}Opcode parity, bounded buffers, GPU reduction, readback and forced overflow recovery passed.
                     </span>
                   ) : gpuSupported ? (
                     <span>A compatible graphics processor passed compute, readback and forced buffer-overflow recovery tests.</span>

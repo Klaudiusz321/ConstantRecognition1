@@ -7,6 +7,23 @@ export const MAX_GROUP_BEST_TO_VERIFY = 64;
 export const RESULT_WORDS = 4;
 export const RESULT_BYTES = RESULT_WORDS * 4;
 
+/** Stable 16-byte record copied from WGSL storage into CPU-readable staging memory. */
+export const GPU_INTERMEDIATE_RESULT_FORMAT = Object.freeze({
+  byteLength: RESULT_BYTES,
+  localIndexOffset: 0,
+  gpuRelativeErrorOffset: 4,
+  gpuValueOffset: 8,
+  flagsOffset: 12,
+  validFlag: 1,
+} as const);
+
+/** Stable 16-byte atomic counter/overflow record written once per GPU tile. */
+export const GPU_SEARCH_STATE_FORMAT = Object.freeze({
+  byteLength: 16,
+  candidateCountOffset: 0,
+  overflowOffset: 4,
+} as const);
+
 export const enum FormTokenKind {
   Constant = 0,
   Unary = 1,
@@ -110,7 +127,10 @@ export interface GPUSearchRequest {
   readonly ranking?: GPURanking;
 
   readonly topN?: number;
+  /** Per-tile ceiling; actual capacity is also capped by that tile's invocation count. */
   readonly candidateCapacity?: number;
+  /** Total persistent storage + staging-buffer budget for this search. */
+  readonly maxDeviceBufferBytes?: number;
   readonly tileInvocations?: number;
   readonly groupBestToVerify?: number;
   readonly maxEvaluations?: bigint;
@@ -134,6 +154,7 @@ export interface GPUSearchSummary {
   /** Number of full candidate-buffer tiles that were safely split and rerun. */
   readonly overflowRetries: number;
   readonly transfers: GPUTransferMetrics;
+  readonly buffers: GPUBufferMetrics;
 }
 
 /** Measured host/device traffic and the largest persistent allocation in one search. */
@@ -146,6 +167,19 @@ export interface GPUTransferMetrics {
   readonly peakStorageBytes: number;
   readonly peakReadbackBytes: number;
   readonly peakAllocatedBytes: number;
+}
+
+/** Bounded-buffer evidence returned with every search. */
+export interface GPUBufferMetrics {
+  readonly intermediateRecordBytes: number;
+  readonly configuredCandidateCapacity: number;
+  readonly peakTileCandidateCapacity: number;
+  readonly peakThresholdCandidates: number;
+  readonly forwardedCandidates: number;
+  readonly verifiedCandidates: number;
+  readonly retainedResults: number;
+  readonly discardedVerifiedResults: number;
+  readonly maxDeviceBufferBytes: number;
 }
 
 export interface RawGPUCandidate {

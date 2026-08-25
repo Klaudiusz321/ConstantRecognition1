@@ -32,6 +32,32 @@ The default tile is 1,048,576 candidates, or 4,096 workgroups. Tiles are capped 
 
 Multiple numerical targets currently reuse one engine but are searched sequentially. A future two-dimensional target/candidate dispatch is possible, but it would need a separate result-compaction design and is not part of the present correctness contract.
 
+## Intermediate-buffer contract
+
+Every GPU candidate is one aligned 16-byte record:
+
+| Offset | Type | Meaning |
+| ---: | --- | --- |
+| 0 | `u32` | invocation index local to the current tile |
+| 4 | `f32` | GPU screening error or weighted MSE |
+| 8 | `f32` | GPU value at the target or first observation |
+| 12 | `u32` | validity flag; exactly `1` means readable |
+
+The separate 16-byte tile state stores an atomic candidate count at offset 0 and an overflow flag at offset 4. The remaining words are padding. These stable layouts are exported as code constants and are regression-tested against the CPU parser.
+
+The stage transition is strictly ordered:
+
+1. CPU zeroes the tile state and writes parameters/form data.
+2. GPU screening writes only the compacted candidate prefix and one winner per workgroup.
+3. GPU reduction writes at most the requested globally best workgroup candidates.
+4. CPU maps state and reduced winners. An overflow discards this tile's partial prefix and recursively reruns two disjoint halves.
+5. If there is no overflow, CPU copies and maps exactly `candidateCount * 16` threshold bytes.
+6. Parsed fields are copied into ordinary JS objects before staging buffers are unmapped.
+7. Only after every staging buffer is `unmapped` may another dispatch reuse or resize the resource set.
+8. CPU deduplicates by local index (threshold evidence wins), performs FP64 verification and offers the result to a bounded sorted top-N store.
+
+The top-N store never contains more than `topN` objects, including transiently. When full, a weaker new result is discarded immediately; a stronger result is inserted in sorted order and evicts exactly the current worst. Search summaries report forwarded, verified, retained and discarded counts.
+
 ## CPU-to-GPU transfer
 
 For every tile the host writes:
@@ -56,7 +82,11 @@ Candidate-buffer overflow is never treated as truncation. The CPU bisects and re
 
 ## Device memory
 
-Buffers persist across tiles and grow to power-of-two capacities. A resize destroys the previous buffer set before rebinding the replacement. All buffers are destroyed when the engine or device is destroyed.
+The logical threshold capacity of a tile is `min(candidateCapacity, tileCandidateCount)`. A 13-expression tile therefore allocates at most 13 candidate records, not the default ceiling of 65,536. Buffers persist across tiles and normally grow to power-of-two capacities. If geometric growth would exceed the total search budget, the planner uses exact capacities instead.
+
+The default budget for persistent storage plus CPU-readable staging buffers is 64 MiB and is checked before the first dispatch. This is distinct from the adapter's per-buffer limits. A request that cannot fit even at exact capacities is rejected before any partial result can be produced. A smaller budget also prevents reuse of an older, oversized resource set.
+
+A resize happens only between completed dispatches, after all staging buffers are unmapped. The previous set is destroyed before allocation to avoid a double-allocation spike. If construction or bind-group creation fails, every buffer created by that attempt is destroyed. All buffers are destroyed when the engine or device is destroyed.
 
 For the default 65,536 candidate capacity, a full 4,096-workgroup tile, one data row and 32 reduced winners, the persistent footprint is:
 
@@ -64,7 +94,7 @@ For the default 65,536 candidate capacity, a full 4,096-workgroup tile, one data
 - CPU-readable staging buffers: 1,049,104 bytes;
 - total allocated buffer bytes: 2,164,400 bytes (about 2.06 MiB).
 
-The engine checks `maxBufferSize`, `maxStorageBufferBindingSize`, workgroup size, workgroup storage and dispatch limits before use. Every search summary exposes measured dispatch count, data-upload count, candidate-readback count, byte traffic and peak allocation.
+The engine checks `maxBufferSize`, `maxStorageBufferBindingSize`, the 64 MiB total budget, workgroup size, workgroup storage and dispatch limits before use. Every search summary exposes measured dispatch count, data-upload count, candidate-readback count, byte traffic, peak allocation, peak logical capacity and top-N discard evidence.
 
 ## Numerical correctness boundary
 
@@ -83,6 +113,8 @@ GPU readiness now requires real dispatch and readback evidence for:
 - one-variable recognition with two tiles and exactly one dataset upload;
 - two-variable recognition requiring both `C1` and `C2`;
 - forced one-slot candidate-buffer overflow with recovery of all 13 indices;
+- adaptive one-record allocation under an exact 768-byte resource budget;
+- retention of the best 3 out of 13 verified records with 10 explicit discards;
 - CPU FP64 acceptance after GPU FP32 screening.
 
 Automated tests also cover exact form counts through deep `K`, mixed-radix indices above `u32`, carry boundaries, non-finite intermediate recovery, FP32 input compatibility, memory accounting and shader regression guards.

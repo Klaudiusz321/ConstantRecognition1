@@ -28,10 +28,14 @@ import {
 import {
   assertGPUOverflowRecoveryEvidence,
   assertGPUSelfTestEvidence,
+  BoundedResultBuffer,
   estimateGPUResourceFootprint,
+  planGPUBufferCapacities,
 } from '../app/calculator/lib/webgpu-v2/webgpu-engine';
 import {
   FormTokenKind,
+  GPU_INTERMEDIATE_RESULT_FORMAT,
+  GPU_SEARCH_STATE_FORMAT,
   MAX_GROUP_BEST_TO_VERIFY,
 } from '../app/calculator/lib/webgpu-v2/types';
 import {
@@ -332,6 +336,98 @@ describe('GPU memory accounting', () => {
       readbackBytes: 176,
       allocatedBytes: 1_104,
     });
+  });
+
+  it('uses the stable intermediate and tile-state layouts', () => {
+    expect(GPU_INTERMEDIATE_RESULT_FORMAT).toEqual({
+      byteLength: 16,
+      localIndexOffset: 0,
+      gpuRelativeErrorOffset: 4,
+      gpuValueOffset: 8,
+      flagsOffset: 12,
+      validFlag: 1,
+    });
+    expect(GPU_SEARCH_STATE_FORMAT).toEqual({
+      byteLength: 16,
+      candidateCountOffset: 0,
+      overflowOffset: 4,
+    });
+  });
+
+  it('grows geometrically when the complete buffer set remains within budget', () => {
+    expect(planGPUBufferCapacities({
+      candidateCapacity: 8,
+      groupCapacity: 4,
+      dataCapacity: 3,
+      reducedCapacity: 2,
+      storageBufferLimit: 1_000_000,
+      maxAllocatedBytes: 2_000,
+    })).toEqual({
+      candidateCapacity: 8,
+      groupCapacity: 4,
+      dataCapacity: 4,
+      reducedCapacity: 2,
+      storageBytes: 944,
+      readbackBytes: 176,
+      allocatedBytes: 1_120,
+    });
+  });
+
+  it('falls back to exact capacities instead of exceeding the total memory budget', () => {
+    const plan = planGPUBufferCapacities({
+      candidateCapacity: 3,
+      groupCapacity: 3,
+      dataCapacity: 3,
+      reducedCapacity: 3,
+      storageBufferLimit: 1_000_000,
+      maxAllocatedBytes: 1_000,
+    });
+    expect(plan).toMatchObject({
+      candidateCapacity: 3,
+      groupCapacity: 3,
+      dataCapacity: 3,
+      reducedCapacity: 3,
+      allocatedBytes: 960,
+    });
+
+    expect(() => planGPUBufferCapacities({
+      candidateCapacity: 3,
+      groupCapacity: 3,
+      dataCapacity: 3,
+      reducedCapacity: 3,
+      storageBufferLimit: 1_000_000,
+      maxAllocatedBytes: 959,
+    })).toThrow(/requires 960 bytes/i);
+  });
+
+  it('rejects any individual buffer beyond the adapter binding limit', () => {
+    expect(() => planGPUBufferCapacities({
+      candidateCapacity: 100,
+      groupCapacity: 1,
+      dataCapacity: 1,
+      reducedCapacity: 1,
+      storageBufferLimit: 1_000,
+      maxAllocatedBytes: 10_000,
+    })).toThrow(/adapter storage-buffer limit/i);
+  });
+});
+
+describe('bounded verified-result buffer', () => {
+  it('retains only the best N values without a transient over-capacity state', () => {
+    const buffer = new BoundedResultBuffer<number>(3, (left, right) => left - right);
+    for (const value of [5, 1, 3, 2, 4]) buffer.push(value);
+    expect(buffer.snapshot()).toEqual([1, 2, 3]);
+    expect(buffer.size).toBe(3);
+    expect(buffer.discarded).toBe(2);
+  });
+
+  it('returns snapshots that cannot mutate retained state', () => {
+    const buffer = new BoundedResultBuffer<number>(2, (left, right) => left - right);
+    buffer.push(2);
+    buffer.push(1);
+    const snapshot = buffer.snapshot();
+    snapshot.length = 0;
+    expect(buffer.snapshot()).toEqual([1, 2]);
   });
 });
 

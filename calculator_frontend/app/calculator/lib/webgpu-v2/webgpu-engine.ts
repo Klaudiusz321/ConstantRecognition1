@@ -18,7 +18,10 @@ import {
   MAX_GPU_K,
   MAX_GROUP_BEST_TO_VERIFY,
   MAX_OPS_PER_KIND,
+  GPU_INTERMEDIATE_RESULT_FORMAT,
+  GPU_SEARCH_STATE_FORMAT,
   RESULT_BYTES,
+  type GPUBufferMetrics,
   type GPURecognizerInfo,
   type GPUProgress,
   type GPURanking,
@@ -34,7 +37,7 @@ import {
 
 const WORKGROUP_SIZE = 256;
 const PARAM_BYTES = 64;
-const STATE_BYTES = 16;
+const STATE_BYTES = GPU_SEARCH_STATE_FORMAT.byteLength;
 const DATA_POINT_BYTES = 16;
 const FORM_WORDS = MAX_GPU_K * 3 + MAX_OPS_PER_KIND * 3;
 const FORM_BYTES = FORM_WORDS * 4;
@@ -46,6 +49,7 @@ const DEFAULT_MAX_DURATION_MS = 30_000;
 const DEFAULT_GROUP_BEST_TO_VERIFY = 32;
 const DEFAULT_TOP_N = 100;
 const DEFAULT_CR_THRESHOLD = 1.05;
+const DEFAULT_MAX_DEVICE_BUFFER_BYTES = 64 * 1024 * 1024;
 const F32_EPSILON = 2 ** -23;
 const SELF_TEST_TIMEOUT_MS = 5_000;
 
@@ -76,6 +80,13 @@ export interface GPUResourceFootprint {
   readonly allocatedBytes: number;
 }
 
+export interface GPUBufferPlan extends GPUResourceFootprint {
+  readonly candidateCapacity: number;
+  readonly groupCapacity: number;
+  readonly dataCapacity: number;
+  readonly reducedCapacity: number;
+}
+
 interface MutableGPUTransferMetrics {
   dispatches: number;
   dataUploads: number;
@@ -93,6 +104,7 @@ interface DispatchTransfer {
   readonly dataUploaded: boolean;
   readonly candidateReadback: boolean;
   readonly footprint: GPUResourceFootprint;
+  readonly logicalCandidateCapacity: number;
 }
 
 interface DispatchResult {
@@ -110,6 +122,7 @@ interface TileContext {
   readonly packedData: Float32Array<ArrayBuffer> | null;
   readonly dataUploadId: number;
   readonly candidateCapacity: number;
+  readonly maxDeviceBufferBytes: number;
   readonly groupBestToVerify: number;
   readonly signal?: AbortSignal;
   readonly deadline: number;
@@ -120,6 +133,7 @@ interface TileContext {
     form: RpnForm,
     tileStart: bigint,
     candidates: readonly RawGPUCandidate[],
+    thresholdCandidateCount: number,
   ) => void;
 }
 
@@ -146,6 +160,125 @@ export function estimateGPUResourceFootprint(
 function nextPowerOfTwo(value: number): number {
   if (value <= 1) return 1;
   return 2 ** Math.ceil(Math.log2(value));
+}
+
+export function planGPUBufferCapacities({
+  candidateCapacity,
+  groupCapacity,
+  dataCapacity,
+  reducedCapacity,
+  storageBufferLimit,
+  maxAllocatedBytes,
+}: {
+  readonly candidateCapacity: number;
+  readonly groupCapacity: number;
+  readonly dataCapacity: number;
+  readonly reducedCapacity: number;
+  readonly storageBufferLimit: number;
+  readonly maxAllocatedBytes: number;
+}): GPUBufferPlan {
+  for (const [value, label] of [
+    [candidateCapacity, 'candidateCapacity'],
+    [groupCapacity, 'groupCapacity'],
+    [dataCapacity, 'dataCapacity'],
+    [reducedCapacity, 'reducedCapacity'],
+    [storageBufferLimit, 'storageBufferLimit'],
+    [maxAllocatedBytes, 'maxAllocatedBytes'],
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new RangeError(`${label} must be a positive safe integer.`);
+    }
+  }
+
+  const assertIndividualLimits = (capacities: readonly number[]): void => {
+    const byteSizes = [
+      capacities[0] * RESULT_BYTES,
+      capacities[1] * RESULT_BYTES,
+      capacities[2] * DATA_POINT_BYTES,
+      capacities[3] * RESULT_BYTES,
+    ];
+    if (byteSizes.some(size => !Number.isSafeInteger(size) || size > storageBufferLimit)) {
+      throw new RangeError('Requested GPU buffers exceed the adapter storage-buffer limit.');
+    }
+  };
+
+  const requested = [candidateCapacity, groupCapacity, dataCapacity, reducedCapacity] as const;
+  assertIndividualLimits(requested);
+  let allocated = requested.map(nextPowerOfTwo) as [number, number, number, number];
+  try {
+    assertIndividualLimits(allocated);
+  } catch {
+    allocated = [...requested];
+  }
+
+  let footprint = estimateGPUResourceFootprint(...allocated);
+  if (footprint.allocatedBytes > maxAllocatedBytes) {
+    allocated = [...requested];
+    footprint = estimateGPUResourceFootprint(...allocated);
+  }
+  if (footprint.allocatedBytes > maxAllocatedBytes) {
+    throw new RangeError(
+      `GPU buffer plan requires ${footprint.allocatedBytes} bytes, exceeding the ` +
+      `${maxAllocatedBytes}-byte search budget.`,
+    );
+  }
+
+  return {
+    candidateCapacity: allocated[0],
+    groupCapacity: allocated[1],
+    dataCapacity: allocated[2],
+    reducedCapacity: allocated[3],
+    ...footprint,
+  };
+}
+
+/** Streaming, sorted top-N store that never retains more than its configured capacity. */
+export class BoundedResultBuffer<T> {
+  private readonly retained: T[] = [];
+  private discardedCount = 0;
+
+  constructor(
+    readonly capacity: number,
+    private readonly compare: (left: T, right: T) => number,
+  ) {
+    validatePositiveInteger(capacity, 'BoundedResultBuffer capacity');
+  }
+
+  get size(): number {
+    return this.retained.length;
+  }
+
+  get discarded(): number {
+    return this.discardedCount;
+  }
+
+  push(value: T): void {
+    let low = 0;
+    let high = this.retained.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (this.compare(value, this.retained[middle]) < 0) high = middle;
+      else low = middle + 1;
+    }
+
+    if (this.retained.length >= this.capacity && low >= this.capacity) {
+      this.discardedCount++;
+      return;
+    }
+    this.retained.splice(low, 0, value);
+    if (this.retained.length > this.capacity) {
+      this.retained.pop();
+      this.discardedCount++;
+    }
+  }
+
+  some(predicate: (value: T) => boolean): boolean {
+    return this.retained.some(predicate);
+  }
+
+  snapshot(): T[] {
+    return [...this.retained];
+  }
 }
 
 class StopSearch extends Error {
@@ -499,6 +632,7 @@ export class WebGPUConstantRecognizer {
     this.device.pushErrorScope('validation');
     let summary: GPUSearchSummary | null = null;
     let overflowSummary: GPUSearchSummary | null = null;
+    let retentionSummary: GPUSearchSummary | null = null;
     let unarySummary: GPUSearchSummary | null = null;
     let atanhSummary: GPUSearchSummary | null = null;
     let binarySummary: GPUSearchSummary | null = null;
@@ -516,6 +650,7 @@ export class WebGPUConstantRecognizer {
         exactRelativeTolerance: 16 * Number.EPSILON,
         topN: 1,
         candidateCapacity: 8,
+        maxDeviceBufferBytes: 768,
         tileInvocations: 1,
         groupBestToVerify: 1,
         maxEvaluations: BigInt(1),
@@ -535,6 +670,20 @@ export class WebGPUConstantRecognizer {
         exactRelativeTolerance: 16 * Number.EPSILON,
         topN: 13,
         candidateCapacity: 1,
+        tileInvocations: 13,
+        groupBestToVerify: 0,
+        maxEvaluations: BigInt(13),
+        maxDurationMs: SELF_TEST_TIMEOUT_MS,
+        stopAfterFirstAcceptedK: false,
+      });
+
+      retentionSummary = await this.search({
+        target: Math.PI,
+        minK: 1,
+        maxK: 1,
+        screeningRelativeError: 1e30,
+        topN: 3,
+        candidateCapacity: 13,
         tileInvocations: 13,
         groupBestToVerify: 0,
         maxEvaluations: BigInt(13),
@@ -663,6 +812,7 @@ export class WebGPUConstantRecognizer {
     if (validationError) throw new Error(validationError.message);
     if (!summary) throw new Error('The self-test returned no summary.');
     if (!overflowSummary) throw new Error('The overflow self-test returned no summary.');
+    if (!retentionSummary) throw new Error('The bounded-result self-test returned no summary.');
     if (!unarySummary || !atanhSummary || !binarySummary || !reductionSummary) {
       throw new Error('The arithmetic parity self-test returned no summary.');
     }
@@ -672,6 +822,25 @@ export class WebGPUConstantRecognizer {
 
     const resultValue = assertGPUSelfTestEvidence(summary);
     assertGPUOverflowRecoveryEvidence(overflowSummary);
+    if (
+      summary.buffers.peakTileCandidateCapacity !== 1 ||
+      summary.transfers.peakAllocatedBytes !== 768 ||
+      retentionSummary.buffers.peakTileCandidateCapacity !== 13 ||
+      retentionSummary.buffers.peakThresholdCandidates !== 13 ||
+      retentionSummary.buffers.forwardedCandidates !== 13 ||
+      retentionSummary.buffers.verifiedCandidates !== 13 ||
+      retentionSummary.buffers.retainedResults !== 3 ||
+      retentionSummary.buffers.discardedVerifiedResults !== 10 ||
+      retentionSummary.results.length !== 3
+    ) {
+      throw new Error(
+        `Bounded GPU/CPU buffer self-test failed ` +
+        `(tile=${summary.buffers.peakTileCandidateCapacity}, ` +
+        `allocation=${summary.transfers.peakAllocatedBytes}, ` +
+        `retained=${retentionSummary.buffers.retainedResults}, ` +
+        `discarded=${retentionSummary.buffers.discardedVerifiedResults}).`,
+      );
+    }
     let parityCases = 0;
     parityCases += assertScientificParityResults(overflowSummary, CALC4_CONSTANTS.map(token => ({
       tokens: [token],
@@ -866,6 +1035,30 @@ export class WebGPUConstantRecognizer {
     }
     const groupBestToVerify = requestedGroupBest;
     const topN = validatePositiveInteger(request.topN ?? DEFAULT_TOP_N, 'topN');
+    const maxDeviceBufferBytes = validatePositiveInteger(
+      request.maxDeviceBufferBytes ?? DEFAULT_MAX_DEVICE_BUFFER_BYTES,
+      'maxDeviceBufferBytes',
+    );
+    const maximumTileWorkgroups = Math.ceil(tileInvocations / WORKGROUP_SIZE);
+    const maximumGroupCapacity = groupBestToVerify > 0 ? maximumTileWorkgroups : 1;
+    const maximumReducedCapacity = Math.max(
+      Math.min(groupBestToVerify, maximumTileWorkgroups),
+      1,
+    );
+    const dataCapacity = Math.max(
+      functionPoints?.length ?? multivariatePoints?.length ?? 1,
+      1,
+    );
+    // Fail before the first dispatch, so a late larger tile cannot invalidate
+    // otherwise useful results by discovering an impossible allocation plan.
+    planGPUBufferCapacities({
+      candidateCapacity: Math.min(candidateCapacity, tileInvocations),
+      groupCapacity: maximumGroupCapacity,
+      dataCapacity,
+      reducedCapacity: maximumReducedCapacity,
+      storageBufferLimit: maximumStorageBytes,
+      maxAllocatedBytes: maxDeviceBufferBytes,
+    });
 
     const maxEvaluations = request.maxEvaluations ?? DEFAULT_MAX_EVALUATIONS;
     const maxDurationMs = request.maxDurationMs ?? DEFAULT_MAX_DURATION_MS;
@@ -920,13 +1113,16 @@ export class WebGPUConstantRecognizer {
 
     const started = nowMs();
     const deadline = started + maxDurationMs;
-    const results: VerifiedGPUResult[] = [];
+    const resultBuffer = new BoundedResultBuffer<VerifiedGPUResult>(topN, resultComparator);
     let uniqueEvaluations = BigInt(0);
     let dispatchedEvaluations = BigInt(0);
     let completedThroughK = minK - 1;
     let stopReason: SearchStopReason = 'completed';
     let verifiedCandidates = 0;
     let overflowRetries = 0;
+    let peakTileCandidateCapacity = 0;
+    let peakThresholdCandidates = 0;
+    let forwardedCandidates = 0;
     const transferMetrics: MutableGPUTransferMetrics = {
       dispatches: 0,
       dataUploads: 0,
@@ -938,17 +1134,14 @@ export class WebGPUConstantRecognizer {
       peakAllocatedBytes: 0,
     };
 
-    const keepResult = (result: VerifiedGPUResult): void => {
-      results.push(result);
-      results.sort(resultComparator);
-      if (results.length > topN) results.length = topN;
-    };
-
     const verifyCandidates = (
       form: RpnForm,
       tileStart: bigint,
       rawCandidates: readonly RawGPUCandidate[],
+      thresholdCandidateCount: number,
     ): void => {
+      peakThresholdCandidates = Math.max(peakThresholdCandidates, thresholdCandidateCount);
+      forwardedCandidates += rawCandidates.length;
       for (const raw of rawCandidates) {
         const combinationIndex = tileStart + BigInt(raw.localIndex);
         if (combinationIndex >= form.totalCombinations) continue;
@@ -996,7 +1189,7 @@ export class WebGPUConstantRecognizer {
               compressionRatioThreshold,
             });
 
-        keepResult({
+        resultBuffer.push({
           tokens,
           rpn,
           K: form.K,
@@ -1025,6 +1218,7 @@ export class WebGPUConstantRecognizer {
         : null,
       dataUploadId: ++this.dataUploadGeneration,
       candidateCapacity,
+      maxDeviceBufferBytes,
       groupBestToVerify,
       signal: request.signal,
       deadline,
@@ -1052,6 +1246,10 @@ export class WebGPUConstantRecognizer {
         transferMetrics.peakAllocatedBytes = Math.max(
           transferMetrics.peakAllocatedBytes,
           transfer.footprint.allocatedBytes,
+        );
+        peakTileCandidateCapacity = Math.max(
+          peakTileCandidateCapacity,
+          transfer.logicalCandidateCapacity,
         );
       },
       onCandidates: verifyCandidates,
@@ -1094,7 +1292,7 @@ export class WebGPUConstantRecognizer {
             );
             formCompleted += batchBig;
 
-            acceptedAtThisK = acceptedAtThisK || results.some(
+            acceptedAtThisK = acceptedAtThisK || resultBuffer.some(
               (result) => result.K === K && result.accepted,
             );
 
@@ -1135,7 +1333,7 @@ export class WebGPUConstantRecognizer {
       stopReason,
       target: request.target,
       calculator,
-      results: [...results],
+      results: resultBuffer.snapshot(),
       uniqueEvaluations,
       dispatchedEvaluations,
       elapsedMs: nowMs() - started,
@@ -1144,6 +1342,17 @@ export class WebGPUConstantRecognizer {
       transfers: {
         ...transferMetrics,
       } satisfies GPUTransferMetrics,
+      buffers: {
+        intermediateRecordBytes: GPU_INTERMEDIATE_RESULT_FORMAT.byteLength,
+        configuredCandidateCapacity: candidateCapacity,
+        peakTileCandidateCapacity,
+        peakThresholdCandidates,
+        forwardedCandidates,
+        verifiedCandidates,
+        retainedResults: resultBuffer.size,
+        discardedVerifiedResults: resultBuffer.discarded,
+        maxDeviceBufferBytes,
+      } satisfies GPUBufferMetrics,
     };
   }
 
@@ -1192,7 +1401,12 @@ export class WebGPUConstantRecognizer {
     for (const candidate of dispatched.thresholdCandidates) {
       deduplicated.set(candidate.localIndex, candidate); // threshold source wins
     }
-    context.onCandidates(form, tileStart, [...deduplicated.values()]);
+    context.onCandidates(
+      form,
+      tileStart,
+      [...deduplicated.values()],
+      dispatched.thresholdCandidates.length,
+    );
   }
 
   private async dispatchTile(
@@ -1213,19 +1427,24 @@ export class WebGPUConstantRecognizer {
     );
     const bestCount = Math.min(context.groupBestToVerify, workgroupCount);
     const groupCapacity = bestCount > 0 ? workgroupCount : 1;
+    // A tile cannot emit more records than it evaluates. Keeping the user's
+    // larger ceiling as a configuration limit must not reserve unused memory.
+    const logicalCandidateCapacity = Math.min(context.candidateCapacity, batchCount);
     const resources = this.ensureResources(
-      context.candidateCapacity,
+      logicalCandidateCapacity,
       groupCapacity,
       dataCapacity,
       Math.max(bestCount, 1),
+      context.maxDeviceBufferBytes,
     );
+    this.assertReadbackBuffersAreUnmapped(resources);
     const formWords = this.packFormData(form, context.calculator, tileStart);
     const params = this.packParams(
       context.targetF32,
       context.screeningRelativeError,
       form.K,
       batchCount,
-      context.candidateCapacity,
+      logicalCandidateCapacity,
       workgroupCount,
       context.calculator,
       context.functionPoints,
@@ -1275,6 +1494,7 @@ export class WebGPUConstantRecognizer {
       dataUploaded,
       candidateReadback: false,
       footprint: resources.footprint,
+      logicalCandidateCapacity,
     });
 
     let stateMapped = false;
@@ -1288,13 +1508,24 @@ export class WebGPUConstantRecognizer {
           .mapAsync(GPUMapMode.READ, 0, bestCount * RESULT_BYTES)
           .then(() => { reducedMapped = true; }));
       }
-      await Promise.all(mappings);
+      // Wait for every mapping attempt even if one rejects. Otherwise the
+      // surviving promise could map its buffer after this frame has already
+      // left the try/finally block, leaking a mapped staging buffer into the
+      // next dispatch.
+      const mappingResults = await Promise.allSettled(mappings);
+      const mappingFailure = mappingResults.find(
+        (result): result is PromiseRejectedResult => result.status === 'rejected',
+      );
+      if (mappingFailure) throw mappingFailure.reason;
       throwIfAborted(context.signal);
 
       const stateView = new DataView(resources.stateReadback.getMappedRange(0, STATE_BYTES));
-      const candidateCount = stateView.getUint32(0, true);
-      const overflowFlag = stateView.getUint32(4, true);
-      const overflow = overflowFlag !== 0 || candidateCount > context.candidateCapacity;
+      const candidateCount = stateView.getUint32(
+        GPU_SEARCH_STATE_FORMAT.candidateCountOffset,
+        true,
+      );
+      const overflowFlag = stateView.getUint32(GPU_SEARCH_STATE_FORMAT.overflowOffset, true);
+      const overflow = overflowFlag !== 0 || candidateCount > logicalCandidateCapacity;
 
       const groupBest = bestCount > 0
         ? this.parseCandidates(
@@ -1340,6 +1571,7 @@ export class WebGPUConstantRecognizer {
         dataUploaded: false,
         candidateReadback: true,
         footprint: resources.footprint,
+        logicalCandidateCapacity,
       });
       await resources.candidateReadback.mapAsync(GPUMapMode.READ, 0, resultBytes);
       try {
@@ -1370,14 +1602,26 @@ export class WebGPUConstantRecognizer {
     const parsed: RawGPUCandidate[] = [];
 
     for (let i = 0; i < count; i++) {
-      const offset = i * RESULT_BYTES;
-      const localIndex = view.getUint32(offset, true);
-      const gpuRelativeError = view.getFloat32(offset + 4, true);
-      const gpuValue = view.getFloat32(offset + 8, true);
-      const flags = view.getUint32(offset + 12, true);
+      const offset = i * GPU_INTERMEDIATE_RESULT_FORMAT.byteLength;
+      const localIndex = view.getUint32(
+        offset + GPU_INTERMEDIATE_RESULT_FORMAT.localIndexOffset,
+        true,
+      );
+      const gpuRelativeError = view.getFloat32(
+        offset + GPU_INTERMEDIATE_RESULT_FORMAT.gpuRelativeErrorOffset,
+        true,
+      );
+      const gpuValue = view.getFloat32(
+        offset + GPU_INTERMEDIATE_RESULT_FORMAT.gpuValueOffset,
+        true,
+      );
+      const flags = view.getUint32(
+        offset + GPU_INTERMEDIATE_RESULT_FORMAT.flagsOffset,
+        true,
+      );
 
       if (
-        flags === 1 &&
+        flags === GPU_INTERMEDIATE_RESULT_FORMAT.validFlag &&
         localIndex < batchCount &&
         Number.isFinite(gpuRelativeError) &&
         Number.isFinite(gpuValue)
@@ -1467,14 +1711,17 @@ export class WebGPUConstantRecognizer {
     groupCapacity: number,
     dataCapacity: number,
     reducedCapacity: number,
+    maxAllocatedBytes: number,
   ): GPUResources {
     const existing = this.resources;
+    if (existing) this.assertReadbackBuffersAreUnmapped(existing);
     if (
       existing &&
       existing.candidateCapacity >= candidateCapacity &&
       existing.groupCapacity >= groupCapacity &&
       existing.dataCapacity >= dataCapacity &&
-      existing.reducedCapacity >= reducedCapacity
+      existing.reducedCapacity >= reducedCapacity &&
+      existing.footprint.allocatedBytes <= maxAllocatedBytes
     ) {
       return existing;
     }
@@ -1483,141 +1730,124 @@ export class WebGPUConstantRecognizer {
       this.info.maxStorageBufferBindingSize,
       this.info.maxBufferSize,
     );
-    const growCapacity = (requested: number, bytesPerElement: number): number => Math.min(
-      nextPowerOfTwo(requested),
-      Math.floor(storageLimit / bytesPerElement),
-    );
-    const allocatedCandidateCapacity = growCapacity(candidateCapacity, RESULT_BYTES);
-    const allocatedGroupCapacity = growCapacity(groupCapacity, RESULT_BYTES);
-    const allocatedDataCapacity = growCapacity(dataCapacity, DATA_POINT_BYTES);
-    const allocatedReducedCapacity = growCapacity(reducedCapacity, RESULT_BYTES);
-    if (
-      allocatedCandidateCapacity < candidateCapacity ||
-      allocatedGroupCapacity < groupCapacity ||
-      allocatedDataCapacity < dataCapacity ||
-      allocatedReducedCapacity < reducedCapacity
-    ) {
-      throw new RangeError('Requested GPU buffers exceed the adapter storage-buffer limit.');
-    }
-    const candidateBytes = allocatedCandidateCapacity * RESULT_BYTES;
-    const groupBytes = allocatedGroupCapacity * RESULT_BYTES;
-    const dataBytes = allocatedDataCapacity * DATA_POINT_BYTES;
-    const reducedBytes = allocatedReducedCapacity * RESULT_BYTES;
-    if (!Number.isSafeInteger(candidateBytes) || candidateBytes > storageLimit) {
-      throw new RangeError('Candidate buffer exceeds the adapter storage-buffer limit.');
-    }
-    if (!Number.isSafeInteger(groupBytes) || groupBytes > storageLimit) {
-      throw new RangeError('Workgroup-best buffer exceeds the adapter storage-buffer limit.');
-    }
-    if (!Number.isSafeInteger(dataBytes) || dataBytes > storageLimit) {
-      throw new RangeError('Function data buffer exceeds the adapter storage-buffer limit.');
-    }
-    if (!Number.isSafeInteger(reducedBytes) || reducedBytes > storageLimit) {
-      throw new RangeError('Reduced-best buffer exceeds the adapter storage-buffer limit.');
-    }
+    const plan = planGPUBufferCapacities({
+      candidateCapacity,
+      groupCapacity,
+      dataCapacity,
+      reducedCapacity,
+      storageBufferLimit: storageLimit,
+      maxAllocatedBytes,
+    });
+    const candidateBytes = plan.candidateCapacity * RESULT_BYTES;
+    const groupBytes = plan.groupCapacity * RESULT_BYTES;
+    const dataBytes = plan.dataCapacity * DATA_POINT_BYTES;
+    const reducedBytes = plan.reducedCapacity * RESULT_BYTES;
 
+    // Dispatches are strictly sequential and every mapped range is copied to
+    // JS before this point. Destroying the old set here cannot invalidate an
+    // in-flight readback and avoids a double-allocation memory spike.
     this.destroyResources();
-
-    const params = this.device.createBuffer({
-      label: 'CR params',
-      size: PARAM_BYTES,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    const form = this.device.createBuffer({
-      label: 'CR form and calculator',
-      size: FORM_BYTES,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    });
-    const candidates = this.device.createBuffer({
-      label: 'CR compacted candidates',
-      size: candidateBytes,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-    });
-    const state = this.device.createBuffer({
-      label: 'CR candidate state',
-      size: STATE_BYTES,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-    });
-    const groupBest = this.device.createBuffer({
-      label: 'CR group best',
-      size: groupBytes,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-    });
-    const dataPoints = this.device.createBuffer({
-      label: 'CR function data points',
-      size: dataBytes,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    });
-    const reducedBest = this.device.createBuffer({
-      label: 'CR globally reduced best candidates',
-      size: reducedBytes,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-    });
-    const candidateReadback = this.device.createBuffer({
-      label: 'CR candidate readback',
-      size: candidateBytes,
-      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-    });
-    const stateReadback = this.device.createBuffer({
-      label: 'CR state readback',
-      size: STATE_BYTES,
-      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-    });
-    const reducedReadback = this.device.createBuffer({
-      label: 'CR reduced-best readback',
-      size: reducedBytes,
-      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-    });
-
-    const bindGroup = this.device.createBindGroup({
-      label: 'CR search bind group',
-      layout: this.pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: params } },
-        { binding: 1, resource: { buffer: form } },
-        { binding: 2, resource: { buffer: candidates } },
-        { binding: 3, resource: { buffer: state } },
-        { binding: 4, resource: { buffer: groupBest } },
-        { binding: 5, resource: { buffer: dataPoints } },
-      ],
-    });
-    const reductionBindGroup = this.device.createBindGroup({
-      label: 'CR best-candidate reduction bind group',
-      layout: this.reductionPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: params } },
-        { binding: 4, resource: { buffer: groupBest } },
-        { binding: 6, resource: { buffer: reducedBest } },
-      ],
-    });
-    const footprint = estimateGPUResourceFootprint(
-      allocatedCandidateCapacity,
-      allocatedGroupCapacity,
-      allocatedDataCapacity,
-      allocatedReducedCapacity,
-    );
-
-    this.resources = {
-      candidateCapacity: allocatedCandidateCapacity,
-      groupCapacity: allocatedGroupCapacity,
-      dataCapacity: allocatedDataCapacity,
-      reducedCapacity: allocatedReducedCapacity,
-      params,
-      form,
-      candidates,
-      state,
-      groupBest,
-      dataPoints,
-      reducedBest,
-      candidateReadback,
-      stateReadback,
-      reducedReadback,
-      bindGroup,
-      reductionBindGroup,
-      footprint,
-      dataUploadId: null,
+    const createdBuffers: GPUBuffer[] = [];
+    const createBuffer = (descriptor: GPUBufferDescriptor): GPUBuffer => {
+      const buffer = this.device.createBuffer(descriptor);
+      createdBuffers.push(buffer);
+      return buffer;
     };
-    return this.resources;
+
+    try {
+      const params = createBuffer({
+        label: 'CR params', size: PARAM_BYTES,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      const form = createBuffer({
+        label: 'CR form and calculator', size: FORM_BYTES,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      });
+      const candidates = createBuffer({
+        label: 'CR compacted candidates', size: candidateBytes,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      });
+      const state = createBuffer({
+        label: 'CR candidate state', size: STATE_BYTES,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+      });
+      const groupBest = createBuffer({
+        label: 'CR group best', size: groupBytes,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      });
+      const dataPoints = createBuffer({
+        label: 'CR function data points', size: dataBytes,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      });
+      const reducedBest = createBuffer({
+        label: 'CR globally reduced best candidates', size: reducedBytes,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      });
+      const candidateReadback = createBuffer({
+        label: 'CR candidate readback', size: candidateBytes,
+        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+      });
+      const stateReadback = createBuffer({
+        label: 'CR state readback', size: STATE_BYTES,
+        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+      });
+      const reducedReadback = createBuffer({
+        label: 'CR reduced-best readback', size: reducedBytes,
+        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+      });
+
+      const bindGroup = this.device.createBindGroup({
+        label: 'CR search bind group',
+        layout: this.pipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: params } },
+          { binding: 1, resource: { buffer: form } },
+          { binding: 2, resource: { buffer: candidates } },
+          { binding: 3, resource: { buffer: state } },
+          { binding: 4, resource: { buffer: groupBest } },
+          { binding: 5, resource: { buffer: dataPoints } },
+        ],
+      });
+      const reductionBindGroup = this.device.createBindGroup({
+        label: 'CR best-candidate reduction bind group',
+        layout: this.reductionPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: params } },
+          { binding: 4, resource: { buffer: groupBest } },
+          { binding: 6, resource: { buffer: reducedBest } },
+        ],
+      });
+
+      this.resources = {
+        candidateCapacity: plan.candidateCapacity,
+        groupCapacity: plan.groupCapacity,
+        dataCapacity: plan.dataCapacity,
+        reducedCapacity: plan.reducedCapacity,
+        params, form, candidates, state, groupBest, dataPoints, reducedBest,
+        candidateReadback, stateReadback, reducedReadback,
+        bindGroup, reductionBindGroup,
+        footprint: plan,
+        dataUploadId: null,
+      };
+      return this.resources;
+    } catch (error) {
+      for (const buffer of createdBuffers) buffer.destroy();
+      this.resources = null;
+      throw stageError('GPU buffer allocation failed', error);
+    }
+  }
+
+  private assertReadbackBuffersAreUnmapped(resources: GPUResources): void {
+    const mapped = [
+      resources.candidateReadback,
+      resources.stateReadback,
+      resources.reducedReadback,
+    ].find(buffer => buffer.mapState !== 'unmapped');
+    if (mapped) {
+      throw new Error(
+        `GPU buffer lifecycle violation: ${mapped.label || 'readback buffer'} is ${mapped.mapState}.`,
+      );
+    }
   }
 
   private destroyResources(): void {
