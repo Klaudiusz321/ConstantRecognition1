@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_FUNCTION_ROWS,
+  MAX_MULTIPLE_TARGETS,
   parseFunctionDataset,
   parseMultipleConstantsDataset,
   parseMultivariateDataset,
@@ -19,6 +21,11 @@ describe('scientific input contracts', () => {
       expect(parseFunctionDataset('1,1\ninvalid\n3,9').error).toMatch(/line 2/i);
       expect(parseFunctionDataset('1,1\n2,4,-0.1').error).toMatch(/non-negative/i);
     });
+
+    it('rejects input beyond the bounded per-worker data allocation', () => {
+      const rows = Array.from({ length: MAX_FUNCTION_ROWS + 1 }, (_, index) => `${index},${index}`);
+      expect(parseFunctionDataset(rows.join('\n')).error).toMatch(/at most 4096/i);
+    });
   });
 
   describe('two-variable function recognition', () => {
@@ -34,6 +41,14 @@ describe('scientific input contracts', () => {
       expect(parseMultivariateDataset('3,4,5\n5,12,13').error).toMatch(/at least three/i);
       expect(parseMultivariateDataset('3,4,5\n3,4,5\n8,15,17').error).toMatch(/duplicate/i);
       expect(parseMultivariateDataset('3,4,5\n5,12,13,-1\n8,15,17').error).toMatch(/non-negative/i);
+    });
+
+    it('applies the same bounded row count to two-variable data', () => {
+      const rows = Array.from(
+        { length: MAX_FUNCTION_ROWS + 1 },
+        (_, index) => `${index},${index + 1},${index + 2}`,
+      );
+      expect(parseMultivariateDataset(rows.join('\n')).error).toMatch(/at most 4096/i);
     });
   });
 
@@ -51,6 +66,11 @@ describe('scientific input contracts', () => {
       expect(parseMultipleConstantsDataset('3.14159').error).toMatch(/at least two/i);
       expect(parseMultipleConstantsDataset('3.14159\nnot-a-number').error).toMatch(/line 2/i);
       expect(parseMultipleConstantsDataset('3.14159\n2.71828, -1').error).toMatch(/non-negative/i);
+    });
+
+    it('caps retained per-target state and output rows', () => {
+      const rows = Array.from({ length: MAX_MULTIPLE_TARGETS + 1 }, (_, index) => String(index + 1));
+      expect(parseMultipleConstantsDataset(rows.join('\n')).error).toMatch(/at most 512/i);
     });
   });
 });

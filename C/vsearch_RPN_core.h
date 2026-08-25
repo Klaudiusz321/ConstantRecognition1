@@ -133,6 +133,11 @@ typedef enum {
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
+/* Shared native/WASM bounds. They limit retained input and result state, not
+   the number of candidate expressions enumerated. */
+#define VSEARCH_MAX_BATCH_TARGETS 512
+#define VSEARCH_MAX_FUNCTION_ROWS 4096
+
 /* ============================================================================
  * CORE SEARCH FUNCTION
  * 

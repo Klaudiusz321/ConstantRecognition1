@@ -37,6 +37,7 @@
 #include <stdint.h>
 #include <math.h>
 #include <float.h>
+#include <stdarg.h>
 
 #include "vsearch_RPN_core.h"
 #include "utils.h"
@@ -47,11 +48,38 @@
 
 #define MAX_CODE_LENGTH  32
 #define MAX_STACK_DEPTH  32
-#define JSON_BUFFER_SIZE (1024 * 1024)
+#define JSON_BASE_BYTES   (16 * 1024)
+#define JSON_RESULT_BYTES 1024
 #define EPS_MAX          16    /* Maximum ULPs for "exact" match */
 #define DEFAULT_CR_THRESHOLD 1.05
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+/* Bounded JSON writer. The search never stores candidate expressions in this
+   buffer: it contains only the final best record per requested target plus a
+   fixed-size summary. Keeping the capacity explicit also prevents snprintf's
+   would-have-written return value from moving a pointer past the allocation. */
+typedef struct {
+    char* data;
+    size_t capacity;
+    size_t length;
+    int failed;
+} JsonWriter;
+
+static int json_append(JsonWriter* writer, const char* format, ...) {
+    if (writer->failed || writer->length >= writer->capacity) return 0;
+    size_t remaining = writer->capacity - writer->length;
+    va_list args;
+    va_start(args, format);
+    int written = vsnprintf(writer->data + writer->length, remaining, format, args);
+    va_end(args);
+    if (written < 0 || (size_t)written >= remaining) {
+        writer->failed = 1;
+        return 0;
+    }
+    writer->length += (size_t)written;
+    return 1;
+}
 
 /* ============================================================================
  * BUILD INFO
@@ -353,9 +381,6 @@ typedef struct {
     int func_best_K;
     int func_best_indices[MAX_CODE_LENGTH];
     char func_best_ternary[MAX_CODE_LENGTH];
-    char* json_ptr;
-    int json_remaining;
-    int result_count;
     int cpu_id;
     uint64_t total_ternary;
     uint64_t valid_ternary;
@@ -388,28 +413,7 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
                     st->unary_ops, st->binary_ops, st->mode, &st->data[0]);
                 memcpy(st->func_best_ternary, ternary, K);
                 memcpy(st->func_best_indices, indices, K * sizeof(int));
-                char code[512];
-                format_code(ternary, indices, K, st->const_ops, st->unary_ops, st->binary_ops, st->mode, code, sizeof(code));
-                
-                if (st->result_count > 0) {
-                    int w = snprintf(st->json_ptr, st->json_remaining, ",\n");
-                    st->json_ptr += w;
-                    st->json_remaining -= w;
-                }
-                int w = snprintf(st->json_ptr, st->json_remaining,
-                    "{"
-                    "\"K\":%d, "
-                    "\"REL_ERR\":%.5e, "
-                    "\"result\":\"INTERMEDIATE\", "
-                    "\"status\":\"RUNNING\", "
-                    "\"cpuId\":%d, "
-                    "\"RPN\":\"%s\""
-                    "}",
-                    K, err, st->cpu_id, code);
-                st->json_ptr += w;
-                st->json_remaining -= w;
-                st->result_count++;
-                
+
                 if (err <= 1e-12) {
                     st->stop_search = 1;
                     return 1;
@@ -434,64 +438,11 @@ static int generate_and_evaluate(const char* ternary, int* indices, int pos, int
                 st->targets[t].computed_value = computed;
                 memcpy(st->targets[t].best_ternary, ternary, K);
                 memcpy(st->targets[t].best_indices, indices, K * sizeof(int));
-                
-                /* Output INTERMEDIATE result */
-                char code[512];
-                format_code(ternary, indices, K, st->const_ops, st->unary_ops, st->binary_ops, MODE_CONSTANT, code, sizeof(code));
-                int hamming = compute_hamming_distance(target, computed);
-                
-                if (st->result_count > 0) {
-                    int w = snprintf(st->json_ptr, st->json_remaining, ",\n");
-                    st->json_ptr += w;
-                    st->json_remaining -= w;
-                }
-                int w = snprintf(st->json_ptr, st->json_remaining,
-                    "{"
-                    "\"K\":%d, "
-                    "\"REL_ERR\":%.5e, "
-                    "\"result\":\"INTERMEDIATE\", "
-                    "\"status\":\"RUNNING\", "
-                    "\"cpuId\":%d, "
-                    "\"HAMMING_DISTANCE\":%d, "
-                    "\"RPN\":\"%s\""
-                    "}",
-                    K, err, st->cpu_id, hamming, code);
-                st->json_ptr += w;
-                st->json_remaining -= w;
-                st->result_count++;
             }
             if (is_exact_match(err, computed, target, delta, K, st->n_total, st->cr_threshold)) {
                 st->targets[t].found = 1;
                 st->num_found++;
-                
-                /* For batch mode (n_data > 1), output SUCCESS entry in results array.
-                   For single-target (CONSTANT mode), skip to preserve backward compatibility. */
-                if (st->n_data > 1) {
-                    char code[512];
-                    format_code(ternary, indices, K, st->const_ops, st->unary_ops, st->binary_ops, MODE_CONSTANT, code, sizeof(code));
-                    int hamming = compute_hamming_distance(target, computed);
-                    
-                    if (st->result_count > 0) {
-                        int w = snprintf(st->json_ptr, st->json_remaining, ",\n");
-                        st->json_ptr += w;
-                        st->json_remaining -= w;
-                    }
-                    int w = snprintf(st->json_ptr, st->json_remaining,
-                        "{"
-                        "\"target_id\":%.0f, "
-                        "\"target\":%.17g, "
-                        "\"K\":%d, "
-                        "\"REL_ERR\":%.5e, "
-                        "\"result\":\"SUCCESS\", "
-                        "\"HAMMING_DISTANCE\":%d, "
-                        "\"RPN\":\"%s\""
-                        "}",
-                        st->data[t].x, target, K, err, hamming, code);
-                    st->json_ptr += w;
-                    st->json_remaining -= w;
-                    st->result_count++;
-                }
-                
+
                 if (st->num_to_find > 0 && st->num_found >= st->num_to_find) {
                     st->stop_search = 1;
                     return 1;
@@ -563,16 +514,31 @@ char* vsearch_core(
     if (!isfinite(cr_threshold) || cr_threshold < 0.0) {
         return strdup("{\"error\":\"Compression-ratio threshold must be finite and non-negative\",\"status\":\"ERROR\"}");
     }
+    if (mode == MODE_BATCH && n_data > VSEARCH_MAX_BATCH_TARGETS) {
+        return strdup("{\"error\":\"Batch search supports at most 512 targets\",\"status\":\"ERROR\"}");
+    }
+    if (is_function_mode(mode) && n_data > VSEARCH_MAX_FUNCTION_ROWS) {
+        return strdup("{\"error\":\"Function search supports at most 4096 data rows\",\"status\":\"ERROR\"}");
+    }
 
-    char* json_output = (char*)malloc(JSON_BUFFER_SIZE);
+    /* The report is sized from the maximum number of retained rows, never
+       from the number of expressions tested. Constant/function searches keep
+       one record; batch search keeps one final record per input target. */
+    size_t retained_candidates = (mode == MODE_BATCH) ? (size_t)n_data : 1u;
+    if (retained_candidates > (SIZE_MAX - JSON_BASE_BYTES) / JSON_RESULT_BYTES) {
+        return strdup("{\"error\":\"Output size overflow\",\"status\":\"ERROR\"}");
+    }
+    size_t json_capacity = JSON_BASE_BYTES + retained_candidates * JSON_RESULT_BYTES;
+    char* json_output = (char*)malloc(json_capacity);
     if (!json_output) return strdup("{\"error\":\"Memory allocation failed\"}");
+    JsonWriter writer = {json_output, json_capacity, 0u, 0};
     
     /* For MODE_CONSTANT/MODE_BATCH: allocate per-target state */
     TargetState* targets = NULL;
     if (!is_function_mode(mode)) {
         targets = (TargetState*)calloc(n_data, sizeof(TargetState));
         if (!targets) { free(json_output); return strdup("{\"error\":\"Memory allocation failed\"}"); }
-        for (int i = 0; i < n_data; i++) { targets[i].best_err = DBL_MAX; targets[i].best_K = 1; }
+        for (int i = 0; i < n_data; i++) { targets[i].best_err = DBL_MAX; }
     }
     
     /* Cost alphabet includes variable terminals as distinct instructions. */
@@ -591,8 +557,7 @@ char* vsearch_core(
     st.num_to_find = effective_num;
     st.cr_threshold = cr_threshold;
     st.targets = targets;
-    st.func_best_err = DBL_MAX; st.func_best_K = 1;
-    st.json_ptr = json_output; st.json_remaining = JSON_BUFFER_SIZE;
+    st.func_best_err = DBL_MAX;
     st.cpu_id = cpu_id;
     
     /* JSON header */
@@ -602,7 +567,7 @@ char* vsearch_core(
     const char* metric_str[] = {"ABS", "REL", "MSE", "MAE", "MAX", "ULP", "HAMMING"};
     const char* compare_str = (compare == COMPARE_STRICT) ? "STRICT" : "EQUAL";
     
-    int w = snprintf(st.json_ptr, st.json_remaining,
+    json_append(&writer,
         "{\n"
         "\"buildTime\": \"%s\",\n"
         "\"mode\": \"%s\",\n"
@@ -629,8 +594,11 @@ char* vsearch_core(
         cpu_id, ncpus, MinK, MaxK,
         n_const, n_unary, n_binary, n_total,
         COMPILER_VERSION, ARCH_INFO, OS_INFO);
-    st.json_ptr += w;
-    st.json_remaining -= w;
+    if (writer.failed) {
+        free(targets);
+        free(json_output);
+        return strdup("{\"error\":\"Output buffer capacity exceeded\",\"status\":\"ERROR\"}");
+    }
     
     char ternary[MAX_CODE_LENGTH];
     int indices[MAX_CODE_LENGTH];
@@ -652,39 +620,6 @@ char* vsearch_core(
             if (t < end - 1) ternary_increment(ternary, K);
         }
         
-        /* Emit K_BEST after each level (for CONSTANT/BATCH mode) */
-        if (!st.stop_search && !is_function_mode(mode)) {
-            for (int i = 0; i < n_data; i++) {
-                if (targets[i].found) continue;
-                if (targets[i].best_K > 0) {
-                    char code[512];
-                    format_code(targets[i].best_ternary, targets[i].best_indices, targets[i].best_K,
-                               const_ops, unary_ops, binary_ops, MODE_CONSTANT, code, sizeof(code));
-                    int hamming = compute_hamming_distance(data[i].y, targets[i].computed_value);
-                    
-                    if (st.result_count > 0) {
-                        w = snprintf(st.json_ptr, st.json_remaining, ",\n");
-                        st.json_ptr += w;
-                        st.json_remaining -= w;
-                    }
-                    w = snprintf(st.json_ptr, st.json_remaining,
-                        "{"
-                        "\"K\":%d, "
-                        "\"REL_ERR\":%.5e, "
-                        "\"result\":\"K_BEST\"      , "
-                        "\"status\":\"RUNNING\", "
-                        "\"cpuId\":%d, "
-                        "\"HAMMING_DISTANCE\":%d, "
-                        "\"RPN\":\"%s\""
-                        "}",
-                        K, targets[i].best_err, cpu_id, hamming, code);
-                    st.json_ptr += w;
-                    st.json_remaining -= w;
-                    st.result_count++;
-                }
-            }
-        }
-        
         /* Early abort heuristic */
         if (st.valid_ternary <= 12 && st.total_ternary > 250 && K > 4) {
             st.stop_search = 1;
@@ -697,47 +632,43 @@ char* vsearch_core(
         char code[512];
         format_code(st.func_best_ternary, st.func_best_indices, st.func_best_K, const_ops, unary_ops, binary_ops, mode, code, sizeof(code));
         const char* result_type = (st.func_best_err <= 1e-12) ? "SUCCESS" : "FAILURE";
-        w = snprintf(st.json_ptr, st.json_remaining,
+        json_append(&writer,
             "],\n \"result\":\"%s\", \"RPN\":\"%s\", \"REL_ERR\":%.17e, "
             "\"K\":%d, \"status\":\"FINISHED\", "
+            "\"memory_model\":\"STREAMING_O_K_PLUS_DATA\", "
+            "\"peak_live_expressions\":1, \"retained_candidates\":1, "
+            "\"output_capacity_bytes\":%llu, "
             "\"total_ternary\":%llu, \"valid_ternary\":%llu, \"evaluations\":%llu}",
             result_type, code, st.func_best_err, st.func_best_K,
+            (unsigned long long)json_capacity,
             (unsigned long long)st.total_ternary,
             (unsigned long long)st.valid_ternary,
             (unsigned long long)st.evaluations);
     } else {
-        /* Output not-found targets with their best approximation.
-           For single-target (CONSTANT mode), skip to preserve backward compatibility. */
+        /* Batch mode retains exactly one final record per target. Progressive
+           improvements were already folded into TargetState and are not
+           materialized in the report. */
         int not_found = 0;
         for (int i = 0; i < n_data; i++) {
-            if (!targets[i].found) {
-                not_found++;
-                if (n_data > 1) {  /* Only for batch mode */
-                    char code[512];
-                    format_code(targets[i].best_ternary, targets[i].best_indices, targets[i].best_K, const_ops, unary_ops, binary_ops, MODE_CONSTANT, code, sizeof(code));
-                    int hamming = compute_hamming_distance(data[i].y, targets[i].computed_value);
-                    
-                    if (st.result_count > 0) {
-                        w = snprintf(st.json_ptr, st.json_remaining, ",\n");
-                        st.json_ptr += w;
-                        st.json_remaining -= w;
-                    }
-                    w = snprintf(st.json_ptr, st.json_remaining,
-                        "{"
-                        "\"target_id\":%.0f, "
-                        "\"target\":%.17g, "
-                        "\"K\":%d, "
-                        "\"REL_ERR\":%.5e, "
-                        "\"result\":\"BEST\", "
-                        "\"HAMMING_DISTANCE\":%d, "
-                        "\"RPN\":\"%s\""
-                        "}",
-                        data[i].x, data[i].y, targets[i].best_K, targets[i].best_err, hamming, code);
-                    st.json_ptr += w;
-                    st.json_remaining -= w;
-                    st.result_count++;
-                }
-            }
+            if (!targets[i].found) not_found++;
+            if (mode != MODE_BATCH) continue;
+            char code[512];
+            format_code(targets[i].best_ternary, targets[i].best_indices, targets[i].best_K,
+                        const_ops, unary_ops, binary_ops, MODE_CONSTANT, code, sizeof(code));
+            int hamming = compute_hamming_distance(data[i].y, targets[i].computed_value);
+            if (i > 0) json_append(&writer, ",\n");
+            json_append(&writer,
+                "{"
+                "\"target_id\":%.0f, "
+                "\"target\":%.17g, "
+                "\"K\":%d, "
+                "\"REL_ERR\":%.5e, "
+                "\"result\":\"%s\", "
+                "\"HAMMING_DISTANCE\":%d, "
+                "\"RPN\":\"%s\""
+                "}",
+                data[i].x, data[i].y, targets[i].best_K, targets[i].best_err,
+                targets[i].found ? "SUCCESS" : "BEST", hamming, code);
         }
         
         /* For backward compatibility, use first target's best result in final summary */
@@ -764,21 +695,30 @@ char* vsearch_core(
         }
         
         const char* result_type = (st.num_found == n_data) ? "SUCCESS" : ((st.num_found > 0) ? "PARTIAL" : "FAILURE");
-        w = snprintf(st.json_ptr, st.json_remaining,
+        json_append(&writer,
             "],\n \"result\":\"%s\", \"RPN\":\"%s\", \"REL_ERR\":%.17e, "
             "\"INPUT_ABS_ERR\":%lf, \"COMPRESSION_RATIO\":%lf, \"K\":%d, "
             "\"status\":\"FINISHED\", \"HAMMING_DISTANCE\":%d, "
             "\"num_found\":%d, \"num_not_found\":%d, "
+            "\"memory_model\":\"STREAMING_O_K_PLUS_TARGETS\", "
+            "\"peak_live_expressions\":1, \"retained_candidates\":%llu, "
+            "\"output_capacity_bytes\":%llu, "
             "\"total_ternary\":%llu, \"valid_ternary\":%llu, \"evaluations\":%llu}",
             result_type, final_code, targets[0].best_err,
             delta_val, compression, targets[0].best_K,
             final_hamming, st.num_found, not_found,
+            (unsigned long long)retained_candidates,
+            (unsigned long long)json_capacity,
             (unsigned long long)st.total_ternary,
             (unsigned long long)st.valid_ternary,
             (unsigned long long)st.evaluations);
-        free(targets);
     }
-    
+
+    free(targets);
+    if (writer.failed) {
+        free(json_output);
+        return strdup("{\"error\":\"Output buffer capacity exceeded\",\"status\":\"ERROR\"}");
+    }
     return json_output;
 }
 

@@ -17,8 +17,9 @@ import {
 } from './lib/types';
 import { extractPrecision, evaluateRPN } from './lib/rpn';
 import {
-  buildTaskQueue, createResultFilter, SearchTask, CalculatorSelection,
-  CALC4_CONSTS, CALC4_FUNCS, CALC4_OPS
+  buildTaskQueue, createResultFilter, mergeBoundedSearchResults,
+  MAX_RETAINED_SEARCH_RESULTS, SearchTask, CalculatorSelection,
+  CALC4_CONSTS, CALC4_FUNCS, CALC4_OPS,
 } from './lib/taskQueue';
 import { getCompressionRatio as computeCR } from './lib/cr';
 import {
@@ -853,17 +854,12 @@ export default function CalculatorPage() {
           setResults([...batchBestByTarget.values()].sort(
             (a, b) => (a.targetId ?? 0) - (b.targetId ?? 0),
           ));
-        } else setResults(prev => {
-          const merged = new Map(prev.map(result => [`${result.K}:${result.RPN}`, result]));
-          for (const result of newResults) {
-            const key = `${result.K}:${result.RPN}`;
-            const existing = merged.get(key);
-            if (!existing || result.status === 'SUCCESS' || result.REL_ERR < existing.REL_ERR) {
-              merged.set(key, result);
-            }
-          }
-          return [...merged.values()];
-        });
+        } else setResults(prev => mergeBoundedSearchResults(
+          prev,
+          newResults,
+          exactSearch ? 'relative-error' : 'compression-ratio',
+          MAX_RETAINED_SEARCH_RESULTS,
+        ));
       }
 
       if (isSuccess) {

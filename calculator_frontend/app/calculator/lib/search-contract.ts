@@ -23,6 +23,10 @@ export const DEFAULT_MULTIVARIATE_DATASET = [
   '20, 21, 29',
 ].join('\n');
 
+/** Hard input bounds keep every worker's retained scientific state bounded. */
+export const MAX_MULTIPLE_TARGETS = 512;
+export const MAX_FUNCTION_ROWS = 4096;
+
 export interface MultipleDatasetParseResult {
   readonly targets: BatchTarget[];
   readonly error: string | null;
@@ -59,6 +63,12 @@ export function parseMultipleConstantsDataset(source: string): MultipleDatasetPa
       };
     }
     targets.push({ id: targets.length + 1, value, dy });
+    if (targets.length > MAX_MULTIPLE_TARGETS) {
+      return {
+        targets: [],
+        error: `Multiple-constant recognition supports at most ${MAX_MULTIPLE_TARGETS} targets.`,
+      };
+    }
   }
 
   if (targets.length < 2) {
@@ -85,6 +95,12 @@ export function parseFunctionDataset(source: string): FunctionDatasetParseResult
       return { points: [], error: `Line ${index + 1}: values must be finite and dy must be non-negative.` };
     }
     points.push({ x, y, dy });
+    if (points.length > MAX_FUNCTION_ROWS) {
+      return {
+        points: [],
+        error: `Function recognition supports at most ${MAX_FUNCTION_ROWS} data rows.`,
+      };
+    }
   }
 
   if (points.length < 2) {
@@ -117,6 +133,12 @@ export function parseMultivariateDataset(source: string): MultivariateDatasetPar
     }
     seenInputs.add(key);
     points.push({ c1, c2, y, dy });
+    if (points.length > MAX_FUNCTION_ROWS) {
+      return {
+        points: [],
+        error: `Two-variable recognition supports at most ${MAX_FUNCTION_ROWS} data rows.`,
+      };
+    }
   }
 
   if (points.length < 3) {

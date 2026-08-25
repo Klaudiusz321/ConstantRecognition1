@@ -24,10 +24,9 @@ function waitForReady() {
     });
 }
 
-// Call a search function and free the returned JSON buffer.
-// The C side malloc()s a ~1MB buffer per call and never frees it; with the
-// task queue each worker makes dozens of calls per search and the WASM heap
-// is fixed-size, so leaking the buffer would abort with OOM mid-search.
+// Call a search function and free its bounded final-report buffer. The C side
+// sizes this buffer from retained rows (never from expressions evaluated), but
+// every task still owns its allocation until the worker releases this pointer.
 function callSearch(name, argTypes, args) {
     const toStr = (typeof UTF8ToString === 'function') ? UTF8ToString : Module.UTF8ToString;
     if (typeof toStr !== 'function') {
@@ -46,6 +45,7 @@ function callSearch(name, argTypes, args) {
 function callFunctionSearch(task) {
     const points = Array.isArray(task.functionPoints) ? task.functionPoints : [];
     if (points.length < 2) throw new Error('Function recognition requires at least two data points.');
+    if (points.length > 4096) throw new Error('Function recognition supports at most 4096 data rows.');
 
     const heapF64 = (typeof HEAPF64 !== 'undefined') ? HEAPF64 : Module.HEAPF64;
     if (!heapF64 || typeof Module._malloc !== 'function') {
@@ -93,6 +93,9 @@ function callMultivariateSearch(task) {
     const points = Array.isArray(task.multivariatePoints) ? task.multivariatePoints : [];
     if (points.length < 3) {
         throw new Error('Two-variable recognition requires at least three data points.');
+    }
+    if (points.length > 4096) {
+        throw new Error('Two-variable recognition supports at most 4096 data rows.');
     }
 
     const heapF64 = (typeof HEAPF64 !== 'undefined') ? HEAPF64 : Module.HEAPF64;
@@ -144,6 +147,7 @@ function callMultivariateSearch(task) {
 function callBatchSearch(task) {
     const targets = Array.isArray(task.batchTargets) ? task.batchTargets : [];
     if (targets.length < 2) throw new Error('Multiple-constant recognition requires at least two targets.');
+    if (targets.length > 512) throw new Error('Multiple-constant recognition supports at most 512 targets.');
 
     const heapF64 = (typeof HEAPF64 !== 'undefined') ? HEAPF64 : Module.HEAPF64;
     if (!heapF64 || typeof Module._malloc !== 'function') {

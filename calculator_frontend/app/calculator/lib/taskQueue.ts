@@ -1,3 +1,5 @@
+import type { SearchResult } from './types';
+
 // Dynamic load balancing: task queue for the WASM search workers.
 //
 // The WASM engine partitions each level K (RPN codes of length K) into
@@ -92,6 +94,10 @@ export const BUNDLE_MAX_K = 4;
 // Split the pure-unary chain into single-constant tasks from this level up.
 // Below it the chain is small enough to stay a normal task.
 export const CHAIN_SPLIT_MIN_K = 6;
+
+/** CPU UI retention is independent of the number of expressions enumerated. */
+export const MAX_RETAINED_SEARCH_RESULTS = 100;
+export const MAX_EQUAL_BEST_PER_K = 4;
 
 // Exact leaf count of ternary structure k at level K (0 if syntactically
 // invalid) for a calculator with nc constants, nu unary functions and nb
@@ -190,11 +196,13 @@ export function buildTaskQueue(
   return tasks;
 }
 
-// Filters redundant rows when merging results from many small tasks.
-// Each task reports its own local-best progression, so most rows repeat
-// information already shown. Keep a row only if it improves on the best
-// error seen so far for its K, or ties it with a formula not yet listed.
-export function createResultFilter() {
+// Filters redundant final rows when merging results from many small tasks.
+// Keep a row only if it improves on the best error seen for its K, or belongs
+// to the explicitly bounded set of equal-best formulas.
+export function createResultFilter(maxEqualBestPerK = MAX_EQUAL_BEST_PER_K) {
+  if (!Number.isSafeInteger(maxEqualBestPerK) || maxEqualBestPerK < 1) {
+    throw new RangeError('maxEqualBestPerK must be a positive safe integer.');
+  }
   const bestByK = new Map<number, { err: number; rpns: Set<string> }>();
   return (K: number, relErr: number, rpn: string): boolean => {
     const err = Number.isFinite(relErr) ? relErr : Infinity;
@@ -203,10 +211,64 @@ export function createResultFilter() {
       bestByK.set(K, { err, rpns: new Set([rpn]) });
       return true;
     }
-    if (err === entry.err && !entry.rpns.has(rpn)) {
+    if (
+      err === entry.err &&
+      entry.rpns.size < maxEqualBestPerK &&
+      !entry.rpns.has(rpn)
+    ) {
       entry.rpns.add(rpn);
       return true;
     }
     return false;
   };
+}
+
+export type SearchResultRanking = 'relative-error' | 'compression-ratio';
+
+/**
+ * Merge one completed worker batch into a bounded, de-duplicated result set.
+ * Candidate enumeration remains exhaustive; this only discards weaker report
+ * rows after the C/WASM core has already folded them into its best state.
+ */
+export function mergeBoundedSearchResults(
+  current: readonly SearchResult[],
+  incoming: readonly SearchResult[],
+  ranking: SearchResultRanking,
+  capacity = MAX_RETAINED_SEARCH_RESULTS,
+): SearchResult[] {
+  if (!Number.isSafeInteger(capacity) || capacity < 1) {
+    throw new RangeError('Result capacity must be a positive safe integer.');
+  }
+  const byFormula = new Map<string, SearchResult>();
+  for (const result of [...current, ...incoming]) {
+    const key = `${result.K}:${result.RPN}`;
+    const existing = byFormula.get(key);
+    if (!existing || compareSearchResults(result, existing, ranking) < 0) {
+      byFormula.set(key, result);
+    }
+  }
+  return [...byFormula.values()]
+    .sort((left, right) => compareSearchResults(left, right, ranking))
+    .slice(0, capacity);
+}
+
+function compareSearchResults(
+  left: SearchResult,
+  right: SearchResult,
+  ranking: SearchResultRanking,
+): number {
+  const leftAccepted = left.status === 'SUCCESS' ? 0 : 1;
+  const rightAccepted = right.status === 'SUCCESS' ? 0 : 1;
+  if (leftAccepted !== rightAccepted) return leftAccepted - rightAccepted;
+  if (ranking === 'compression-ratio') {
+    const leftCR = Number.isFinite(left.compressionRatio) ? left.compressionRatio ?? 0 : 0;
+    const rightCR = Number.isFinite(right.compressionRatio) ? right.compressionRatio ?? 0 : 0;
+    if (leftCR !== rightCR) return rightCR - leftCR;
+  }
+  const leftError = Number.isFinite(left.REL_ERR) ? left.REL_ERR : Number.POSITIVE_INFINITY;
+  const rightError = Number.isFinite(right.REL_ERR) ? right.REL_ERR : Number.POSITIVE_INFINITY;
+  if (leftError !== rightError) return leftError - rightError;
+  if (left.K !== right.K) return left.K - right.K;
+  const rpnOrder = left.RPN.localeCompare(right.RPN);
+  return rpnOrder !== 0 ? rpnOrder : left.cpuId - right.cpuId;
 }

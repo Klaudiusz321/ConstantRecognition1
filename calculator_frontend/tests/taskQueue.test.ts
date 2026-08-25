@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
-  buildTaskQueue, createResultFilter, structureWeight, chainIndex,
-  BUNDLE_MAX_K, CHAIN_SPLIT_MIN_K, CALC4_CONSTS, CalculatorSelection
+  buildTaskQueue, createResultFilter, mergeBoundedSearchResults, structureWeight, chainIndex,
+  BUNDLE_MAX_K, CHAIN_SPLIT_MIN_K, CALC4_CONSTS, CalculatorSelection,
+  MAX_EQUAL_BEST_PER_K, MAX_RETAINED_SEARCH_RESULTS,
 } from '../app/calculator/lib/taskQueue';
+import type { SearchResult } from '../app/calculator/lib/types';
 
 // Replicates the chunking in vsearch_RPN_core.c (vsearch_core):
 //   chunk = ceil(3^K / ncpus); start = cpu_id * chunk; end = min(start + chunk, 3^K)
@@ -223,6 +225,14 @@ describe('createResultFilter', () => {
     expect(keep(4, 0, 'pi')).toBe(false);          // already listed
   });
 
+  it('bounds equal-best history independently of the number of workers', () => {
+    const keep = createResultFilter();
+    for (let index = 0; index < 1000; index++) {
+      const accepted = keep(7, 0, `formula-${index}`);
+      expect(accepted).toBe(index < MAX_EQUAL_BEST_PER_K);
+    }
+  });
+
   it('tracks each K independently', () => {
     const keep = createResultFilter();
     expect(keep(3, 1e-8, 'pi')).toBe(true);
@@ -234,5 +244,42 @@ describe('createResultFilter', () => {
     expect(keep(2, NaN, 'weird')).toBe(true);      // first row still shown
     expect(keep(2, 1.0, 'better')).toBe(true);     // any finite error beats it
     expect(keep(2, Infinity, 'weird2')).toBe(false);
+  });
+});
+
+describe('bounded CPU result retention', () => {
+  const result = (index: number, overrides: Partial<SearchResult> = {}): SearchResult => ({
+    cpuId: index,
+    K: 5,
+    RPN: `candidate-${index}`,
+    result: String(index),
+    REL_ERR: index + 1,
+    status: 'K_BEST',
+    compressionRatio: 1 / (index + 1),
+    ...overrides,
+  });
+
+  it('never retains more than the configured number of report rows', () => {
+    const incoming = Array.from(
+      { length: MAX_RETAINED_SEARCH_RESULTS * 10 },
+      (_, index) => result(index),
+    );
+    const retained = mergeBoundedSearchResults([], incoming, 'relative-error');
+    expect(retained).toHaveLength(MAX_RETAINED_SEARCH_RESULTS);
+    expect(retained[0].REL_ERR).toBe(1);
+    expect(retained.at(-1)?.REL_ERR).toBe(MAX_RETAINED_SEARCH_RESULTS);
+  });
+
+  it('deduplicates worker reports and replaces a weak record with a stronger one', () => {
+    const weak = result(1, { RPN: 'PI', REL_ERR: 1e-3 });
+    const strong = result(2, { RPN: 'PI', REL_ERR: 0, status: 'SUCCESS' });
+    expect(mergeBoundedSearchResults([weak], [strong], 'relative-error', 4)).toEqual([strong]);
+  });
+
+  it('uses compression ratio when that is the selected scientific ranking', () => {
+    const accurate = result(1, { REL_ERR: 1e-12, compressionRatio: 0.5 });
+    const compressed = result(2, { REL_ERR: 1e-6, compressionRatio: 2 });
+    expect(mergeBoundedSearchResults([], [accurate, compressed], 'compression-ratio', 1))
+      .toEqual([compressed]);
   });
 });

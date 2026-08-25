@@ -43,8 +43,59 @@ Module.onRuntimeInitialized = () => {
     if (!successes.every(row => row.K === 1 && row.REL_ERR === 0)) {
       throw new Error('WASM did not identify PI and EULER exactly at K=1.');
     }
+    if (
+      report.results.length !== ids.length ||
+      report.memory_model !== 'STREAMING_O_K_PLUS_TARGETS' ||
+      report.peak_live_expressions !== 1 ||
+      report.retained_candidates !== ids.length ||
+      report.output_capacity_bytes !== 16 * 1024 + ids.length * 1024
+    ) {
+      throw new Error('WASM did not preserve the bounded streaming-memory contract.');
+    }
 
-    console.log('WASM batch smoke test passed: 2/2 exact targets with stable IDs.');
+    const boundedCount = 512;
+    const allocatedCount = boundedCount + 1;
+    const boundedBytes = allocatedCount * Float64Array.BYTES_PER_ELEMENT;
+    const boundedIdPtr = Module._malloc(boundedBytes);
+    const boundedValuePtr = Module._malloc(boundedBytes);
+    const boundedUncertaintyPtr = Module._malloc(boundedBytes);
+    try {
+      HEAPF64.set(Array.from({ length: allocatedCount }, (_, index) => index + 1), boundedIdPtr / 8);
+      HEAPF64.set(new Array(allocatedCount).fill(Math.PI), boundedValuePtr / 8);
+      HEAPF64.set(new Array(allocatedCount).fill(0), boundedUncertaintyPtr / 8);
+      const boundedResultPtr = Module.ccall(
+        'search_batch_custom_with_cr_wasm',
+        'number',
+        ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'string', 'string', 'string', 'number'],
+        [boundedIdPtr, boundedValuePtr, boundedUncertaintyPtr, boundedCount, 1, 1, 0, 1, 'PI', '', '', 0.9],
+      );
+      const boundedReport = JSON.parse(UTF8ToString(boundedResultPtr));
+      Module._free(boundedResultPtr);
+      if (
+        boundedReport.results.length !== boundedCount ||
+        boundedReport.retained_candidates !== boundedCount ||
+        boundedReport.output_capacity_bytes !== 16 * 1024 + boundedCount * 1024
+      ) {
+        throw new Error('WASM failed the maximum bounded-batch report test.');
+      }
+      const rejectedResultPtr = Module.ccall(
+        'search_batch_custom_with_cr_wasm',
+        'number',
+        ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number', 'string', 'string', 'string', 'number'],
+        [boundedIdPtr, boundedValuePtr, boundedUncertaintyPtr, allocatedCount, 1, 1, 0, 1, 'PI', '', '', 0.9],
+      );
+      const rejectedReport = JSON.parse(UTF8ToString(rejectedResultPtr));
+      Module._free(rejectedResultPtr);
+      if (rejectedReport.status !== 'ERROR' || !/512 targets/i.test(rejectedReport.error)) {
+        throw new Error('WASM did not reject a batch beyond its bounded memory contract.');
+      }
+    } finally {
+      Module._free(boundedIdPtr);
+      Module._free(boundedValuePtr);
+      Module._free(boundedUncertaintyPtr);
+    }
+
+    console.log('WASM batch smoke test passed: exact targets, one live expression, bounded 512-row output.');
   } catch (error) {
     console.error(error);
     process.exitCode = 1;

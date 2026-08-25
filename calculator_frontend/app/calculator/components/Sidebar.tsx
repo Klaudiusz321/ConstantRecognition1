@@ -632,6 +632,11 @@ export function Sidebar({
                   {earlyExitCRNote}
                 </p>
                 </div>
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-[10px] leading-4 text-gray-500 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-400">
+                  <strong className="block font-medium text-gray-700 dark:text-gray-300">Bounded search memory</strong>
+                  CPU/WASM keeps one live expression and at most 100 report rows; GPU uses bounded tile and top-N buffers.
+                  Statistical L/P indicators may stop a non-exhaustive search, but they are not RAM limits.
+                </div>
                 </>
               )}
             </div>

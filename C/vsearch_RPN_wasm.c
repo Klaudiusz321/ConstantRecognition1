@@ -271,6 +271,12 @@ char* search_function_wasm(
     int MinK, int MaxK,
     int cpu_id, int ncpus)
 {
+    if (n_data < 1 || n_data > VSEARCH_MAX_FUNCTION_ROWS) {
+        return strdup("{\"error\":\"Function search supports 1 to 4096 data rows\",\"status\":\"ERROR\"}");
+    }
+    if (x_values == NULL || y_values == NULL) {
+        return strdup("{\"error\":\"Function data arrays are required\",\"status\":\"ERROR\"}");
+    }
     /* Convert arrays to DataPoint array */
     DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
     if (!data) {
@@ -304,6 +310,12 @@ char* search_function_custom_wasm(
     int cpu_id, int ncpus,
     const char* consts, const char* funcs, const char* ops)
 {
+    if (n_data < 1 || n_data > VSEARCH_MAX_FUNCTION_ROWS) {
+        return strdup("{\"error\":\"Function search supports 1 to 4096 data rows\",\"status\":\"ERROR\"}");
+    }
+    if (x_values == NULL || y_values == NULL) {
+        return strdup("{\"error\":\"Function data arrays are required\",\"status\":\"ERROR\"}");
+    }
     DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
     if (!data) return strdup("{\"error\":\"Memory allocation failed\"}");
 
@@ -329,6 +341,12 @@ char* search_multivariate_wasm(
     int MinK, int MaxK,
     int cpu_id, int ncpus)
 {
+    if (n_data < 1 || n_data > VSEARCH_MAX_FUNCTION_ROWS) {
+        return strdup("{\"error\":\"Two-variable search supports 1 to 4096 data rows\",\"status\":\"ERROR\"}");
+    }
+    if (c1_values == NULL || c2_values == NULL || y_values == NULL) {
+        return strdup("{\"error\":\"Two-variable data arrays are required\",\"status\":\"ERROR\"}");
+    }
     DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
     if (!data) return strdup("{\"error\":\"Memory allocation failed\"}");
 
@@ -358,6 +376,12 @@ char* search_multivariate_custom_wasm(
     int cpu_id, int ncpus,
     const char* consts, const char* funcs, const char* ops)
 {
+    if (n_data < 1 || n_data > VSEARCH_MAX_FUNCTION_ROWS) {
+        return strdup("{\"error\":\"Two-variable search supports 1 to 4096 data rows\",\"status\":\"ERROR\"}");
+    }
+    if (c1_values == NULL || c2_values == NULL || y_values == NULL) {
+        return strdup("{\"error\":\"Two-variable data arrays are required\",\"status\":\"ERROR\"}");
+    }
     DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
     if (!data) return strdup("{\"error\":\"Memory allocation failed\"}");
 
@@ -383,6 +407,12 @@ char* search_batch_wasm(
     int MinK, int MaxK,
     int cpu_id, int ncpus)
 {
+    if (n_data < 1 || n_data > VSEARCH_MAX_BATCH_TARGETS) {
+        return strdup("{\"error\":\"Batch search supports 1 to 512 targets\",\"status\":\"ERROR\"}");
+    }
+    if (x_values == NULL || y_values == NULL) {
+        return strdup("{\"error\":\"Batch data arrays are required\",\"status\":\"ERROR\"}");
+    }
     /* Convert arrays to DataPoint array */
     DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
     if (!data) {
@@ -417,6 +447,12 @@ char* search_batch_with_cr_wasm(
     int cpu_id, int ncpus,
     double cr_threshold)
 {
+    if (n_data < 1 || n_data > VSEARCH_MAX_BATCH_TARGETS) {
+        return strdup("{\"error\":\"Batch search supports 1 to 512 targets\",\"status\":\"ERROR\"}");
+    }
+    if (x_values == NULL || y_values == NULL) {
+        return strdup("{\"error\":\"Batch data arrays are required\",\"status\":\"ERROR\"}");
+    }
     DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
     if (!data) return strdup("{\"error\":\"Memory allocation failed\"}");
 
@@ -444,6 +480,12 @@ char* search_batch_custom_wasm(
     int cpu_id, int ncpus,
     const char* consts, const char* funcs, const char* ops)
 {
+    if (n_data < 1 || n_data > VSEARCH_MAX_BATCH_TARGETS) {
+        return strdup("{\"error\":\"Batch search supports 1 to 512 targets\",\"status\":\"ERROR\"}");
+    }
+    if (x_values == NULL || y_values == NULL) {
+        return strdup("{\"error\":\"Batch data arrays are required\",\"status\":\"ERROR\"}");
+    }
     DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
     if (!data) return strdup("{\"error\":\"Memory allocation failed\"}");
 
@@ -469,6 +511,12 @@ char* search_batch_custom_with_cr_wasm(
     const char* consts, const char* funcs, const char* ops,
     double cr_threshold)
 {
+    if (n_data < 1 || n_data > VSEARCH_MAX_BATCH_TARGETS) {
+        return strdup("{\"error\":\"Batch search supports 1 to 512 targets\",\"status\":\"ERROR\"}");
+    }
+    if (x_values == NULL || y_values == NULL) {
+        return strdup("{\"error\":\"Batch data arrays are required\",\"status\":\"ERROR\"}");
+    }
     DataPoint* data = (DataPoint*)malloc(n_data * sizeof(DataPoint));
     if (!data) return strdup("{\"error\":\"Memory allocation failed\"}");
 

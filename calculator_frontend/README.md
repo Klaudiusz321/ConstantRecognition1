@@ -6,13 +6,26 @@ This is a Next.js 16 frontend for the constant recognizer. The project is config
 - Install dependencies: `npm install`
 - Start the dev server: `npm run dev`
 
-The calculator opens with a three-mode recognition wizard:
+The calculator opens with a four-mode recognition wizard:
 
 - one constant: one `z` value with the existing global uncertainty controls;
 - multiple constants: at least two `z[, dz]` rows, executed through shared CPU/WASM `MODE_BATCH` or independent GPU searches with CPU verification;
 - function: at least two `x, y[, dy]` rows, with the `x` terminal enabled automatically and weighted-MSE reporting.
+- two-variable function: at least three `C1, C2, y[, dy]` rows, requiring both variables in every accepted expression.
 
 The compute engine can be selected manually as Auto, GPU, or CPU. Run `npm test`, `npm run test:wasm-batch`, and `npm run build` before publishing frontend or WASM changes.
+
+## Bounded search-memory contract
+
+The production search is an exhaustive streaming enumerator, not the tensor prototype in `Julia/tensor_search.jl`. For one worker it keeps one RPN structure, one index vector, one evaluation stack and one best state per requested target. It never constructs an array of all candidate expressions or values. Workers receive small structure batches and return only their folded best records.
+
+- CPU/WASM holds at most one live candidate expression and reports `memory_model`, `peak_live_expressions`, `retained_candidates` and `output_capacity_bytes` in every result.
+- A batch retains exactly one best state and one final output row per target, capped at 512 targets.
+- Function datasets are capped at 4096 rows per worker.
+- The browser keeps at most 100 non-batch report rows and at most four equal-best formulas per `K`.
+- GPU storage, staging readback and top-N retention follow the separate bounded contract in `docs/WEBGPU_SCIENTIFIC_AUDIT.md`.
+
+`K` remains the exact RPN token count. The symbols `𝓛` (candidate likelihood) and `P(z)` (the statistical value-density model) from the constant-recognition criteria are scientific ranking/stopping quantities, not RAM controls. The UI's displayed `P = n^-K` is a simpler chance indicator. None of these quantities changes batch capacity or causes expressions to be stored. A future likelihood-based stop may reduce the number of evaluated formulas, but it must be exposed as a non-exhaustive scientific stopping rule rather than repurposed as a memory limit.
 
 ## Static production build
 - Build the site: `npm run build`
