@@ -252,7 +252,7 @@ export function Sidebar({
                 {
                   value: 'bidirectional' as const,
                   label: 'Bidirectional',
-                  disabled: searchMode !== 'constant',
+                  disabled: false,
                 },
               ]).map((option) => (
                 <label

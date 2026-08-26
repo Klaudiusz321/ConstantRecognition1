@@ -1215,6 +1215,17 @@ export default function CalculatorPage() {
     setSearchMode(mode);
   };
 
+  const handleSearchAlgorithmSelect = (algorithm: SearchAlgorithm) => {
+    if (isCalculating) return;
+    // Bidirectional is currently defined for a single numerical target.  Let
+    // its dedicated button select that contract directly instead of exposing
+    // a disabled control that depends on an earlier wizard choice.
+    if (algorithm === 'bidirectional' && searchMode !== 'constant') {
+      handleModeSelect('constant');
+    }
+    setSearchAlgorithm(algorithm);
+  };
+
   const handleOpenWizard = () => {
     if (isCalculating) return;
     clearModeOutput();
@@ -1234,7 +1245,7 @@ export default function CalculatorPage() {
         computeEngine={computeEngine}
         setComputeEngine={setComputeEngine}
         searchAlgorithm={searchAlgorithm}
-        setSearchAlgorithm={setSearchAlgorithm}
+        setSearchAlgorithm={handleSearchAlgorithmSelect}
         detectedCPUs={detectedCPUs}
         searchDepth={searchDepth}
         setSearchDepth={setSearchDepth}
