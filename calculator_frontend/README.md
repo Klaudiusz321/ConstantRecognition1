@@ -13,7 +13,18 @@ The calculator opens with a four-mode recognition wizard:
 - function: at least two `x, y[, dy]` rows, with the `x` terminal enabled automatically and weighted-MSE reporting.
 - two-variable function: at least three `C1, C2, y[, dy]` rows, requiring both variables in every accepted expression.
 
-The compute engine can be selected manually as Auto, GPU, or CPU. Run `npm test`, `npm run test:wasm-batch`, and `npm run build` before publishing frontend or WASM changes.
+The compute engine can be selected manually as Auto, GPU, or CPU. One-constant recognition also exposes an independent **Standard / Bidirectional (Beta)** algorithm selector. Run `npm test`, `npm run test:wasm-batch`, `npm run test:wasm-bidirectional`, and `npm run build` before publishing frontend or WASM changes.
+
+## Bidirectional search (Beta)
+
+The experimental button launches a separate CPU/WASM meet-in-the-middle engine; it does not replace the established streaming enumerator and does not currently use WebGPU.
+
+- `K` keeps exactly the same meaning as Standard search: the total number of calculator tokens in an RPN expression, and the UI value is the inclusive maximum `1..K`.
+- Every finite closed expression through `K=4` is generated without Top-N pruning. The full half-frontier is capped at 150,000 entries and freed after the probe.
+- For longer expressions, the target-side join supports the real finite inverses of `PLUS`, `TIMES`, `SUBTRACT`, and `DIVIDE` at the binary root.
+- `POWER`, non-finite branches, unary-root partitions, and any uncovered range fail closed to Standard CPU/WASM search.
+- A candidate at `K<=5` is already minimal because all shorter levels are complete. For a candidate at `K>5`, Standard search exhaustively checks `1..K-1`; if no join succeeds, Standard completes the selected `1..K` range.
+- The report exposes `complete_through_k`, `minimality_proven`, `fallback_required`, `frontier_entries`, `frontier_bytes`, and `join_evaluations`, so the scientific guarantee is auditable rather than implicit.
 
 ## Bounded search-memory contract
 
@@ -24,6 +35,7 @@ The production search is an exhaustive streaming enumerator, not the tensor prot
 - Function datasets are capped at 4096 rows per worker.
 - The browser keeps at most 100 non-batch report rows and at most four equal-best formulas per `K`.
 - GPU storage, staging readback and top-N retention follow the separate bounded contract in `docs/WEBGPU_SCIENTIFIC_AUDIT.md`.
+- Bidirectional mode retains at most 150,000 short-expression frontier entries and never stores the longer full search space; uncovered formulas are streamed by the Standard fallback.
 
 `K` remains the exact RPN token count. The symbols `𝓛` (candidate likelihood) and `P(z)` (the statistical value-density model) from the constant-recognition criteria are scientific ranking/stopping quantities, not RAM controls. The UI's displayed `P = n^-K` is a simpler chance indicator. None of these quantities changes batch capacity or causes expressions to be stored. A future likelihood-based stop may reduce the number of evaluated formulas, but it must be exposed as a non-exhaustive scientific stopping rule rather than repurposed as a memory limit.
 

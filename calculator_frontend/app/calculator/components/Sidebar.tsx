@@ -2,7 +2,10 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
-import { ActiveWorker, Precision, ErrorMode, ComputeEngine, type SearchMode } from '../lib/types';
+import {
+  ActiveWorker, Precision, ErrorMode, ComputeEngine,
+  type SearchAlgorithm, type SearchMode,
+} from '../lib/types';
 import { formatGPUAdapterName, formatGPUError } from '../lib/gpu-ui';
 import { getCalculatorById, DEFAULT_CALCULATOR_ID } from '../lib/calculators';
 import {
@@ -22,6 +25,8 @@ interface SidebarProps {
   onRetryGPU: () => void;
   computeEngine: ComputeEngine;
   setComputeEngine: (engine: ComputeEngine) => void;
+  searchAlgorithm: SearchAlgorithm;
+  setSearchAlgorithm: (algorithm: SearchAlgorithm) => void;
   detectedCPUs: number;
   searchDepth: number;
   setSearchDepth: (depth: number) => void;
@@ -61,6 +66,8 @@ export function Sidebar({
   onRetryGPU,
   computeEngine,
   setComputeEngine,
+  searchAlgorithm,
+  setSearchAlgorithm,
   detectedCPUs,
   searchDepth,
   setSearchDepth,
@@ -95,7 +102,7 @@ export function Sidebar({
     (errorMode === 'manual' && Number.isFinite(manualTolerance) && manualTolerance > 0);
   const earlyExitCRActive = toleranceSearchActive;
   const earlyExitCRNote = toleranceSearchActive
-    ? 'Applies to CPU/WASM and CPU-verified GPU search.'
+    ? 'Applies to CPU/WASM, CPU-verified GPU search and bidirectional candidates.'
     : 'Ignored for exact search (± 0). Use Auto or Manual uncertainty to enable it.';
   const noConstants = searchMode !== 'function' && searchMode !== 'multivariate' && !enabledTokens.some(
     (t) => calculator.constantsCore.includes(t) || calculator.constantsRedundant.includes(t),
@@ -230,8 +237,59 @@ export function Sidebar({
             </div>
           </div>
 
-          {/* Keep the backend choice visible so GPU and CPU runs are easy to compare. */}
+          {/* Search strategy is an explicit scientific choice.  Bidirectional
+              does not silently replace the established forward enumerator. */}
           <fieldset className="space-y-2" disabled={isCalculating}>
+            <legend className="text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+              Search Algorithm
+            </legend>
+            <div
+              className="grid grid-cols-2 rounded-lg bg-gray-100 p-1 dark:bg-[#111113]"
+              aria-describedby="search-algorithm-help"
+            >
+              {([
+                { value: 'forward' as const, label: 'Standard', disabled: false },
+                {
+                  value: 'bidirectional' as const,
+                  label: 'Bidirectional',
+                  disabled: searchMode !== 'constant',
+                },
+              ]).map((option) => (
+                <label
+                  key={option.value}
+                  className={`relative rounded-md px-2 py-2 text-center text-xs font-semibold transition-colors ${
+                    option.disabled
+                      ? 'cursor-not-allowed text-gray-400 opacity-60'
+                      : searchAlgorithm === option.value
+                        ? 'cursor-pointer bg-white text-violet-700 shadow-sm dark:bg-[#2a2a2e] dark:text-violet-300'
+                        : 'cursor-pointer text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="searchAlgorithm"
+                    value={option.value}
+                    checked={searchAlgorithm === option.value}
+                    onChange={() => setSearchAlgorithm(option.value)}
+                    disabled={option.disabled || isCalculating}
+                    className="sr-only"
+                  />
+                  {option.label}
+                  {option.value === 'bidirectional' && (
+                    <span className="ml-1 align-top text-[8px] font-bold uppercase tracking-wide">Beta</span>
+                  )}
+                </label>
+              ))}
+            </div>
+            <p id="search-algorithm-help" className="text-[11px] leading-4 text-gray-500 dark:text-gray-400">
+              {searchAlgorithm === 'bidirectional'
+                ? 'Builds complete bounded half-frontiers through K=4, joins them from the target, then invokes Standard CPU/WASM whenever shorter formulas still need exhaustive verification.'
+                : 'Streams the established search from K=1 to the selected maximum K without retaining the full expression space.'}
+            </p>
+          </fieldset>
+
+          {/* Keep the backend choice visible so GPU and CPU runs are easy to compare. */}
+          <fieldset className="space-y-2" disabled={isCalculating || searchAlgorithm === 'bidirectional'}>
             <legend className="text-[10px] font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
               Compute Engine
             </legend>
@@ -247,7 +305,7 @@ export function Sidebar({
                 <label
                   key={option.value}
                   className={`relative rounded-md px-2 py-2 text-center text-xs font-semibold transition-colors ${
-                    option.disabled
+                    option.disabled || searchAlgorithm === 'bidirectional'
                       ? 'cursor-not-allowed text-gray-400 opacity-60'
                       : computeEngine === option.value
                         ? 'cursor-pointer bg-white text-[#0066cc] shadow-sm dark:bg-[#2a2a2e] dark:text-blue-300'
@@ -260,7 +318,7 @@ export function Sidebar({
                     value={option.value}
                     checked={computeEngine === option.value}
                     onChange={() => setComputeEngine(option.value as ComputeEngine)}
-                    disabled={option.disabled || isCalculating}
+                    disabled={option.disabled || isCalculating || searchAlgorithm === 'bidirectional'}
                     className="sr-only"
                   />
                   {option.label}
@@ -268,7 +326,9 @@ export function Sidebar({
               ))}
             </div>
             <p id="compute-engine-help" className="text-[11px] leading-4 text-gray-500 dark:text-gray-400">
-              {computeEngine === 'gpu'
+              {searchAlgorithm === 'bidirectional'
+                ? 'The experimental engine currently runs in CPU/WASM; the hardware selector is ignored for this run.'
+                : computeEngine === 'gpu'
                 ? 'GPU screening is forced; every returned candidate is verified on the CPU.'
                 : computeEngine === 'cpu'
                   ? 'GPU is disabled, making this mode suitable for a CPU comparison run.'
@@ -635,6 +695,7 @@ export function Sidebar({
                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-[10px] leading-4 text-gray-500 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-400">
                   <strong className="block font-medium text-gray-700 dark:text-gray-300">Bounded search memory</strong>
                   CPU/WASM keeps one live expression and at most 100 report rows; GPU uses bounded tile and top-N buffers.
+                  Bidirectional mode caps its complete half-frontier at 150,000 entries and releases it after each probe.
                   Statistical L/P indicators may stop a non-exhaustive search, but they are not RAM limits.
                 </div>
                 </>

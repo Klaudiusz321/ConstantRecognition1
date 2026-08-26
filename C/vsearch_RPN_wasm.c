@@ -29,6 +29,7 @@
 #include <string.h>
 
 #include "vsearch_RPN_core.h"
+#include "bidirectional_search.h"
 #include "CALC4.h"
 
 /* ============================================================================
@@ -216,6 +217,33 @@ static char* vsearch_batch_custom(
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+
+/* Independent experimental meet-in-the-middle engine.  It returns a bounded
+   frontier report and tells the frontend whether the streaming CPU verifier
+   still needs to cover shorter levels before minimality can be claimed. */
+EMSCRIPTEN_KEEPALIVE
+char* search_bidirectional_wasm(
+    double z, double dz, int MaxK,
+    const char* const_list,
+    const char* fun_list,
+    const char* op_list,
+    double cr_threshold)
+{
+    ConstOp const_ops[MAX_OPS];
+    UnaryOp unary_ops[MAX_OPS];
+    BinaryOp binary_ops[MAX_OPS];
+    int n_const, n_unary, n_binary;
+    parse_calculator_lists(
+        const_list, fun_list, op_list,
+        const_ops, &n_const, unary_ops, &n_unary, binary_ops, &n_binary);
+
+    return search_bidirectional_constant(
+        z, dz, MaxK,
+        const_ops, n_const,
+        unary_ops, n_unary,
+        binary_ops, n_binary,
+        cr_threshold);
+}
 
 /* Legacy API: uses full CALC4 calculator */
 EMSCRIPTEN_KEEPALIVE

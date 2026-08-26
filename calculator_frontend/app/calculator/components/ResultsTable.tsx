@@ -295,6 +295,17 @@ export function ResultsTable({
               const isBestMatch = maxCR > 0 && Math.abs(cr - maxCR) < 0.001;
               const copyId = `${r.cpuId ?? 'cpu'}-${r.K}-${r.RPN}`;
               const copyState = copyFeedback?.id === copyId ? copyFeedback.state : null;
+              const resultEngine = r.engine ?? (r.cpuId < 0 ? 'gpu' : 'cpu');
+              const engineLabel = resultEngine === 'bidirectional'
+                ? 'BiDir + CPU'
+                : resultEngine === 'gpu'
+                  ? 'GPU + CPU'
+                  : `CPU ${r.cpuId}`;
+              const engineTitle = resultEngine === 'bidirectional'
+                ? 'Found by bounded bidirectional search; shorter levels are verified by CPU/WASM when required'
+                : resultEngine === 'gpu'
+                  ? 'Screened on GPU and verified on CPU'
+                  : `Calculated by CPU worker ${r.cpuId}`;
               return (
               <tr 
                 key={i} 
@@ -309,13 +320,15 @@ export function ResultsTable({
                 <td className="p-3 text-gray-500 dark:text-gray-500">
                   <span
                     className={`inline-flex rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${
-                      r.cpuId < 0
-                        ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300'
+                      resultEngine === 'bidirectional'
+                        ? 'bg-violet-50 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300'
+                        : resultEngine === 'gpu'
+                          ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300'
                         : 'bg-gray-100 text-gray-600 dark:bg-[#2a2a2e] dark:text-gray-300'
                     }`}
-                    title={r.cpuId < 0 ? 'Screened on GPU and verified on CPU' : `Calculated by CPU worker ${r.cpuId}`}
+                    title={engineTitle}
                   >
-                    {r.cpuId < 0 ? 'GPU + CPU' : `CPU ${r.cpuId}`}
+                    {engineLabel}
                   </span>
                 </td>
                 {searchMode === 'multiple' && (

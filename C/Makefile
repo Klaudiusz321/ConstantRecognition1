@@ -21,8 +21,11 @@ vsearch_test: main_vsearch_test.c vsearch_RPN_core.c utils.c
 	$(CC) $(CFLAGS) main_vsearch_test.c vsearch_RPN_core.c utils.c -o vsearch_test $(LDFLAGS)
 
 # WASM build (requires emcc)
-wasm: vsearch_RPN_wasm.c vsearch_RPN_core.c utils.c
-	emcc -O2 -Wall vsearch_RPN_wasm.c vsearch_RPN_core.c utils.c -s WASM=1 -s EXPORTED_FUNCTIONS='["_search_RPN","_search_RPN_with_cr","_search_RPN_hybrid","_vsearch_RPN","_free"]' -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' -o vsearch.js
+wasm: vsearch_RPN_wasm.c vsearch_RPN_core.c bidirectional_search.c utils.c
+	emcc -O2 -Wall vsearch_RPN_wasm.c vsearch_RPN_core.c bidirectional_search.c utils.c -s WASM=1 -s EXPORTED_FUNCTIONS='["_search_RPN","_search_RPN_with_cr","_search_RPN_hybrid","_search_RPN_custom","_search_RPN_custom_with_cr","_search_function_wasm","_search_function_custom_wasm","_search_multivariate_wasm","_search_multivariate_custom_wasm","_search_batch_wasm","_search_batch_with_cr_wasm","_search_batch_custom_wasm","_search_batch_custom_with_cr_wasm","_search_bidirectional_wasm","_vsearch_RPN","_free","_malloc"]' -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' -o vsearch.js
+
+bidirectional_test: test/test_bidirectional_search.c bidirectional_search.c vsearch_RPN_core.c utils.c
+	$(CC) $(CFLAGS) test/test_bidirectional_search.c bidirectional_search.c vsearch_RPN_core.c utils.c -o bidirectional_test $(LDFLAGS)
 
 # Legacy builds (math2.h is header-only, no .c file)
 DEPS = constant.c mathematica.c utils.c

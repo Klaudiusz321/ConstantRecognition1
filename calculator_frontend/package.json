@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:wasm-batch": "node scripts/smoke-wasm-batch.mjs",
+    "test:wasm-bidirectional": "node scripts/smoke-wasm-bidirectional.mjs",
     "test:wasm-multivariate": "node scripts/smoke-wasm-multivariate.mjs",
     "verify:deploy": "node scripts/verify-static-export.mjs"
   },

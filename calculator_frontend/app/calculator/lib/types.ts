@@ -33,7 +33,11 @@ export interface MultivariatePoint {
 // Compute backend selected in the calculator UI.
 export type ComputeEngine = 'auto' | 'gpu' | 'cpu';
 
-export type SearchBackend = 'gpu' | 'cpu';
+// Search strategy is independent of the selected compute hardware.  The
+// bidirectional strategy is currently a constant-recognition experiment.
+export type SearchAlgorithm = 'forward' | 'bidirectional';
+
+export type SearchBackend = 'gpu' | 'cpu' | 'bidirectional';
 
 export type SearchPhase = 'idle' | 'running' | 'complete' | 'partial' | 'aborted' | 'error';
 
@@ -46,6 +50,8 @@ export interface SearchProgress {
 
 export interface SearchResult {
   cpuId: number;
+  /** Origin of this retained result; older rows fall back to cpuId semantics. */
+  engine?: SearchBackend;
   K: number;
   RPN: string;
   result: string;

@@ -18,6 +18,7 @@ export function SearchProgress({
   onAbort,
 }: SearchProgressProps) {
   const isGPU = backend === 'gpu';
+  const isBidirectional = backend === 'bidirectional';
   const percent = progress && progress.total > 0
     ? Math.min(100, Math.round((progress.done / progress.total) * 100))
     : 0;
@@ -25,6 +26,10 @@ export function SearchProgress({
     ? progress?.evaluations
       ? `${progress.evaluations} candidates screened`
       : 'Preparing the graphics processor'
+    : isBidirectional
+      ? progress?.evaluations
+        ? `${progress.evaluations} target-side joins evaluated`
+        : 'Building bounded half-frontiers'
     : progress && progress.total > 0
       ? `${progress.done} of ${progress.total} search chunks complete`
       : 'Preparing CPU workers';
@@ -39,7 +44,7 @@ export function SearchProgress({
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
             <span className="h-2 w-2 rounded-full bg-blue-500 motion-safe:animate-pulse" aria-hidden="true" />
-            {isGPU ? 'GPU accelerated' : 'CPU compatible mode'}
+            {isGPU ? 'GPU accelerated' : isBidirectional ? 'Bidirectional experiment' : 'CPU compatible mode'}
           </span>
           <span className="font-mono text-sm text-gray-500 dark:text-gray-400">
             {(elapsedTime / 1000).toFixed(1)}s
@@ -47,11 +52,13 @@ export function SearchProgress({
         </div>
 
         <h2 id="search-progress-title" className="text-2xl font-semibold text-gray-900 dark:text-white">
-          {isGPU ? 'Searching with GPU' : 'Searching with CPU'}
+          {isGPU ? 'Searching with GPU' : isBidirectional ? 'Bidirectional search' : 'Searching with CPU'}
         </h2>
         <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-400">
           {isGPU
             ? 'The graphics processor is screening formulas quickly. Every returned candidate is checked again on the CPU for accuracy.'
+            : isBidirectional
+              ? 'Complete short-expression frontiers are joined from the target side. The standard CPU/WASM engine verifies any shorter levels not covered by the join.'
             : 'The compatible CPU/WASM engine is checking formulas using the selected calculator settings.'}
         </p>
 
@@ -76,7 +83,9 @@ export function SearchProgress({
         <dl className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
           <div className="rounded-xl bg-gray-50 p-3 dark:bg-[#171719]">
             <dt className="text-[10px] font-medium uppercase tracking-wider text-gray-500">Engine</dt>
-            <dd className="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{isGPU ? 'GPU + CPU check' : 'CPU / WASM'}</dd>
+            <dd className="mt-1 text-sm font-semibold text-gray-900 dark:text-white">
+              {isGPU ? 'GPU + CPU check' : isBidirectional ? 'BiDir + CPU proof' : 'CPU / WASM'}
+            </dd>
           </div>
           <div className="rounded-xl bg-gray-50 p-3 dark:bg-[#171719]">
             <dt className="text-[10px] font-medium uppercase tracking-wider text-gray-500">Complexity</dt>

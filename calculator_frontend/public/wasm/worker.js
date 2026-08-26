@@ -209,6 +209,15 @@ function doWork(task) {
         earlyExitCRThreshold, constList, funcList, opList
     } = task;
     try {
+        if (task.searchAlgorithm === 'bidirectional') {
+            if (typeof Module._search_bidirectional_wasm !== 'function') {
+                throw new Error('This WASM build does not include bidirectional search.');
+            }
+            return callSearch('search_bidirectional_wasm',
+                ['number', 'number', 'number', 'string', 'string', 'string', 'number'],
+                [z, inputPrecision, MaxCodeLength,
+                 constList || '', funcList || '', opList || '', earlyExitCRThreshold]);
+        }
         if (task.searchMode === 'function') {
             return callFunctionSearch(task);
         }

@@ -60,6 +60,8 @@ Create genuinely new problems with elegant solutions. Example: `11/13 = tanh(ln(
 - Parallel CPU search via Web Workers + WASM
 - GPU search via WebGPU compute shaders
 - Manual Auto/GPU/CPU selection with CPU verification of GPU candidates
+- Explicit Standard/Bidirectional (Beta) algorithm selector for one-constant recognition
+- Bounded bidirectional half-frontiers with exhaustive CPU/WASM minimality fallback
 - Native CPU/WASM batch search with one result report per target
 - Univariate function search with weighted-MSE reporting
 - Sortable results table with filters
@@ -118,7 +120,7 @@ Create genuinely new problems with elegant solutions. Example: `11/13 = tanh(ln(
 ### Extended Capabilities
 | Feature | Description | Complexity |
 |---------|-------------|------------|
-| Bidirectional Search | For high-precision constants, search from both ends | High |
+| Bidirectional Search | Experimental bounded meet-in-the-middle accelerator with Standard completeness fallback | Implemented (Beta) |
 | Digit Concatenation | Allow building numbers like 137 from 1, 3, 7 | Medium |
 | Simple Special Functions | LambertW, Zeta — fixed arity, just add C code | Low |
 | Parametric Special Functions | Hypergeometric, MeijerG — variable-length argument lists, requires core redesign | Very High |

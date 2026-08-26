@@ -9,6 +9,7 @@ import {
   defaultFilters,
   ErrorMode,
   ComputeEngine,
+  SearchAlgorithm,
   SearchBackend,
   SearchPhase,
   SearchMode,
@@ -56,6 +57,25 @@ import {
 const ALL_TOKENS = [...CALC4_CONSTS, ...CALC4_FUNCS, ...CALC4_OPS];
 const MULTIVARIATE_STARTER_TOKENS = ['SQR', 'SQRT', 'PLUS'];
 
+interface BidirectionalReport {
+  result?: string;
+  status?: string;
+  error?: string;
+  RPN?: string;
+  K?: number;
+  value?: number;
+  REL_ERR?: number;
+  COMPRESSION_RATIO?: number;
+  complete_through_k?: number;
+  minimality_proven?: boolean;
+  fallback_required?: boolean;
+  fallback_max_k?: number;
+  frontier_entries?: number;
+  frontier_capacity_entries?: number;
+  frontier_bytes?: number;
+  join_evaluations?: number;
+}
+
 // Ensures that all worker/WASM fetches include the configured base path (if any).
 // - Trailing slashes are removed so "//" never appears in URLs.
 // - A leading "/" is added when needed so a value like "~user/app" becomes "/~user/app".
@@ -83,6 +103,7 @@ export default function CalculatorPage() {
   const [gpuAdapterName, setGpuAdapterName] = useState<string | null>(null);
   const [gpuError, setGpuError] = useState<string | null>(null);
   const [computeEngine, setComputeEngine] = useState<ComputeEngine>('auto');
+  const [searchAlgorithm, setSearchAlgorithm] = useState<SearchAlgorithm>('forward');
   const [searchBackend, setSearchBackend] = useState<SearchBackend | null>(null);
   const [searchPhase, setSearchPhase] = useState<SearchPhase>('idle');
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -444,9 +465,114 @@ export default function CalculatorPage() {
         + (searchMode === 'function' ? 1 : searchMode === 'multivariate' ? 2 : 0),
     );
 
-    const gpuWasRequested = computeEngine === 'gpu' || (
+    let standardSearchDepth = searchDepth;
+    let bidirectionalReport: BidirectionalReport | null = null;
+    let bidirectionalCandidate: SearchResult | null = null;
+    let standardAcceptedK: number | null = null;
+
+    if (searchAlgorithm === 'bidirectional' && searchMode === 'constant') {
+      setSearchBackend('bidirectional');
+      setTaskProgress({ done: 0, total: 1, complexityK: searchDepth });
+
+      const report = await new Promise<BidirectionalReport>((resolve) => {
+        const worker = new Worker(withBasePath('/wasm/worker.js'));
+        let settled = false;
+        const finish = (data: BidirectionalReport) => {
+          if (settled) return;
+          settled = true;
+          worker.terminate();
+          workersRef.current = workersRef.current.filter(item => item !== worker);
+          resolve(data);
+        };
+
+        worker.onmessage = (event: MessageEvent) => {
+          if (event.data?.type === 'ready') return;
+          finish(event.data ?? { result: 'ERROR', error: 'The bidirectional worker returned no report.' });
+        };
+        worker.onerror = (event: ErrorEvent) => {
+          finish({ result: 'ERROR', error: event.message || 'The bidirectional worker failed.' });
+        };
+        workersRef.current = [worker];
+        resolveAllRef.current = () => finish({ result: 'ABORTED' });
+        worker.postMessage({
+          z: zNum,
+          inputPrecision: deltaZNum,
+          MinCodeLength: 1,
+          MaxCodeLength: searchDepth,
+          cpuId: -2,
+          ncpus: 1,
+          earlyExitCRThreshold,
+          constList: selection.consts.join(','),
+          funcList: selection.funcs.join(','),
+          opList: selection.ops.join(','),
+          searchMode,
+          searchAlgorithm: 'bidirectional',
+        });
+      });
+
+      resolveAllRef.current = null;
+      if (searchRunIdRef.current !== runId || isAbortedRef.current || report.result === 'ABORTED') return;
+      bidirectionalReport = report;
+      setTaskProgress({
+        done: 1,
+        total: 1,
+        complexityK: typeof report.K === 'number' && report.K > 0 ? report.K : searchDepth,
+        evaluations: typeof report.join_evaluations === 'number'
+          ? report.join_evaluations.toLocaleString('en-US')
+          : undefined,
+      });
+
+      if (report.RPN && typeof report.K === 'number' && report.K > 0) {
+        let numericValue = typeof report.value === 'number' ? String(report.value) : 'N/A';
+        if (numericValue === 'N/A') {
+          try {
+            numericValue = evaluateRPN(report.RPN).toString();
+          } catch {
+            // The report still retains its RPN and numerical error.
+          }
+        }
+        bidirectionalCandidate = {
+          cpuId: -2,
+          engine: 'bidirectional',
+          K: report.K,
+          RPN: report.RPN,
+          result: numericValue,
+          REL_ERR: Number(report.REL_ERR ?? Number.POSITIVE_INFINITY),
+          status: report.result === 'SUCCESS' ? 'SUCCESS' : 'K_BEST',
+          compressionRatio: report.COMPRESSION_RATIO,
+        };
+        setResults([bidirectionalCandidate]);
+      }
+
+      if (!report.error && report.fallback_required === false) {
+        const frontierText = (report.frontier_entries ?? 0).toLocaleString('en-US');
+        setSearchNotice(null);
+        setSearchDetail(report.minimality_proven
+          ? `Bidirectional search found K=${report.K}; complete levels through K=${report.complete_through_k ?? 4} prove that no shorter formula was skipped. The bounded frontier retained ${frontierText} finite expressions.`
+          : `Bidirectional search exhaustively completed the selected range through K=${report.complete_through_k ?? searchDepth}. The bounded frontier retained ${frontierText} finite expressions.`);
+        setTaskProgress(null);
+        stopTimer();
+        setSearchPhase('complete');
+        return;
+      }
+
+      if (report.error) {
+        standardSearchDepth = searchDepth;
+        setSearchNotice(`Bidirectional probe could not complete (${report.error}). Standard CPU/WASM search is continuing without omitting expressions.`);
+      } else {
+        standardSearchDepth = Math.max(1, Math.min(
+          searchDepth,
+          Number(report.fallback_max_k ?? searchDepth),
+        ));
+        setSearchNotice(report.result === 'SUCCESS'
+          ? `Bidirectional search found a K=${report.K} candidate. Standard CPU/WASM is checking every shorter level through K=${standardSearchDepth}.`
+          : `No accepted bidirectional join was found. Standard CPU/WASM is completing the uncovered search through K=${standardSearchDepth}.`);
+      }
+    }
+
+    const gpuWasRequested = searchAlgorithm === 'forward' && (computeEngine === 'gpu' || (
       computeEngine === 'auto' && (!gpuChecked || gpuSupported)
-    );
+    ));
     const gpuInputValues = searchMode === 'function'
       ? (functionPoints ?? []).flatMap(point => point.dy > 0
           ? [point.x, point.y, point.dy]
@@ -534,6 +660,7 @@ export default function CalculatorPage() {
             if (best) {
               batchGPUResults.push({
                 cpuId: -1,
+                engine: 'gpu',
                 K: best.K,
                 RPN: best.rpn,
                 result: String(best.value),
@@ -601,6 +728,7 @@ export default function CalculatorPage() {
 
         const gpuResults: SearchResult[] = summary.results.map((result) => ({
           cpuId: -1,
+          engine: 'gpu',
           K: result.K,
           RPN: result.rpn,
           result: searchMode === 'function' || searchMode === 'multivariate'
@@ -652,7 +780,7 @@ export default function CalculatorPage() {
       }
     }
 
-    setSearchBackend('cpu');
+    setSearchBackend(searchAlgorithm === 'bidirectional' ? 'bidirectional' : 'cpu');
 
     // Dynamic load balancing: the search space is over-decomposed into many
     // small slices ("bag of tasks") and idle workers pull the next slice from
@@ -660,7 +788,7 @@ export default function CalculatorPage() {
     // simultaneously — no worker is married to a fixed slice, so uneven work
     // distribution (heavy gamma-chain structures, E-cores, tab throttling)
     // self-balances instead of leaving one lagging worker at the end.
-    const tasks = buildTaskQueue(searchDepth, selection, {
+    const tasks = buildTaskQueue(standardSearchDepth, selection, {
       variableCount: searchMode === 'function' ? 1 : searchMode === 'multivariate' ? 2 : 0,
       splitUnaryChain: searchMode !== 'function' && searchMode !== 'multivariate',
     });
@@ -675,6 +803,7 @@ export default function CalculatorPage() {
     let remainingInWave = waveEndIndex;
     let aliveWorkers = 0;
     let acceptedResultFound = false;
+    let cpuWorkerFailure: string | null = null;
     const inFlight = new Map<number, SearchTask>();          // workerId -> running task
     const idlePool: { worker: Worker; workerId: number }[] = []; // parked workers (queue drained)
     const keepRow = createResultFilter();
@@ -775,6 +904,7 @@ export default function CalculatorPage() {
           }
           const candidate: SearchResult = {
             cpuId: workerId,
+            engine: 'cpu',
             K: r.K,
             RPN: r.RPN,
             result: numericValue,
@@ -811,6 +941,7 @@ export default function CalculatorPage() {
         }
         newResults.push({
           cpuId: workerId,
+          engine: 'cpu',
           K: r.K,
           RPN: r.RPN,
           result: numericValue,
@@ -840,6 +971,7 @@ export default function CalculatorPage() {
         }
         newResults.push({
           cpuId: workerId,
+          engine: 'cpu',
           K: data.K,
           RPN: data.RPN,
           result: numericValue,
@@ -864,6 +996,11 @@ export default function CalculatorPage() {
 
       if (isSuccess) {
         acceptedResultFound = true;
+        standardAcceptedK = typeof data.K === 'number' ? data.K : null;
+        if (bidirectionalCandidate) {
+          const acceptedRows = newResults.filter(result => result.status === 'SUCCESS');
+          if (acceptedRows.length > 0) setResults(acceptedRows);
+        }
         endSearch();
         return;
       }
@@ -915,7 +1052,9 @@ export default function CalculatorPage() {
         if (idle) assignTask(idle.worker, idle.workerId);
       }
       if (aliveWorkers <= 0) {
-        // Every worker died; end the search so the UI doesn't hang
+        // Every worker died.  End the wait, but never describe an incomplete
+        // verifier run as an exhaustive scientific proof.
+        cpuWorkerFailure = error.message || 'Every CPU/WASM verification worker stopped unexpectedly.';
         endSearch();
       }
     };
@@ -946,6 +1085,12 @@ export default function CalculatorPage() {
     
     if (!isAbortedRef.current) {
       setTaskProgress(null);
+      if (cpuWorkerFailure) {
+        setSearchError(`CPU/WASM verification failed: ${cpuWorkerFailure}`);
+        setSearchDetail(null);
+        setSearchPhase('error');
+        return;
+      }
       if (searchMode === 'multiple' && batchTargets) {
         const acceptedCount = [...batchBestByTarget.values()].filter(
           result => result.status === 'SUCCESS',
@@ -955,9 +1100,30 @@ export default function CalculatorPage() {
           `${batchTargets.length} targets; ${acceptedCount} satisfied the acceptance criterion.`,
         );
       } else {
-        setSearchDetail(acceptedResultFound
-          ? 'The CPU/WASM engine found a formula satisfying the strict acceptance criterion.'
-          : 'The CPU/WASM engine completed the selected search space.');
+        if (bidirectionalReport) {
+          const frontierText = (bidirectionalReport.frontier_entries ?? 0).toLocaleString('en-US');
+          if (standardAcceptedK !== null) {
+            setSearchDetail(
+              `Bidirectional search proposed K=${bidirectionalReport.K}; exhaustive CPU/WASM verification found the shorter accepted length K=${standardAcceptedK}. ` +
+              `The bounded half-frontier retained ${frontierText} finite expressions.`,
+            );
+          } else if (bidirectionalCandidate?.status === 'SUCCESS') {
+            setResults([bidirectionalCandidate]);
+            setSearchDetail(
+              `Bidirectional search found K=${bidirectionalCandidate.K}; CPU/WASM exhaustively checked every shorter level through K=${standardSearchDepth} and found no accepted formula. ` +
+              `The bounded half-frontier retained ${frontierText} finite expressions.`,
+            );
+          } else {
+            setSearchDetail(
+              `The bounded bidirectional probe retained ${frontierText} finite expressions, then CPU/WASM completed the uncovered range through K=${standardSearchDepth}.`,
+            );
+          }
+          setSearchNotice(null);
+        } else {
+          setSearchDetail(acceptedResultFound
+            ? 'The CPU/WASM engine found a formula satisfying the strict acceptance criterion.'
+            : 'The CPU/WASM engine completed the selected search space.');
+        }
       }
       setSearchPhase('complete');
     }
@@ -1033,6 +1199,7 @@ export default function CalculatorPage() {
   const handleModeSelect = (mode: SearchMode) => {
     if (isCalculating) return;
     clearModeOutput();
+    if (mode !== 'constant') setSearchAlgorithm('forward');
     if (mode === 'multivariate') {
       // The reference F(C1,C2) formula is only six tokens long, but it is
       // buried behind hundreds of millions of combinations in full CALC4.
@@ -1066,6 +1233,8 @@ export default function CalculatorPage() {
         onRetryGPU={retryGPU}
         computeEngine={computeEngine}
         setComputeEngine={setComputeEngine}
+        searchAlgorithm={searchAlgorithm}
+        setSearchAlgorithm={setSearchAlgorithm}
         detectedCPUs={detectedCPUs}
         searchDepth={searchDepth}
         setSearchDepth={setSearchDepth}
@@ -1183,6 +1352,8 @@ export default function CalculatorPage() {
                         ? 'Verified results — search limit reached'
                         : searchBackend === 'gpu'
                           ? 'GPU accelerated · verified on CPU'
+                          : searchBackend === 'bidirectional'
+                            ? 'Bidirectional search · verified by CPU/WASM'
                           : 'Search complete on CPU'}
                     </div>
                     {searchDetail && <p className="mt-0.5 text-xs opacity-80">{searchDetail}</p>}
